@@ -216,7 +216,8 @@ export default function Operations() {
       <div className="box">
         <h2 className="title is-4">Viaje Rápido · Taxi / Uber</h2>
         <p className="mb-3">
-          Acepta según zona, número de pasajeros y equipaje. Al aceptar verás
+          Puedes aceptar un solo traslado por llegada de unidad, incluso si ya
+          lo completaste. Solo verás solicitudes de tu ciudad. Al aceptar verás
           los datos del cliente.
         </p>
         <div className="select mb-4 is-fullwidth">
@@ -226,11 +227,13 @@ export default function Operations() {
             onChange={(e) => setFleet(e.target.value)}
           >
             <option value="">Elige tu auto</option>
-            {data?.fleet.map((f) => (
-              <option key={f.id} value={f.id}>
-                {f.model} · {f.plate} · {f.city}
-              </option>
-            ))}
+            {data?.fleet
+              .filter((f) => f.owned)
+              .map((f) => (
+                <option key={f.id} value={f.id}>
+                  {f.model} · {f.plate} · {f.city}
+                </option>
+              ))}
           </select>
         </div>
         {data?.jobs.map((j) => (
@@ -252,6 +255,11 @@ export default function Operations() {
                     : j.customer_phone}
                 </p>
               )}
+              {j.driver_name && (
+                <p>
+                  Chofer: {j.driver_name} · {j.model} · {j.city}
+                </p>
+              )}
             </div>
             {j.status === "waiting" && (
               <button
@@ -264,7 +272,7 @@ export default function Operations() {
                 Aceptar
               </button>
             )}
-            {j.status === "accepted" && (
+            {j.status === "accepted" && j.owned && (
               <button
                 disabled={busy}
                 className="button"

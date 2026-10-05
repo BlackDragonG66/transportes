@@ -86,8 +86,8 @@ export function DemoAdmin({ onChanged }) {
         <p>
           Genera 21 días de salidas: interurbanas y aeropuerto diariamente; CREE
           lunes y miércoles; Teletón martes y jueves. Crea a Jonathan,
-          Esmeralda, Gabriel, cuatro conductores de unidad, otro taxi y dos
-          clientes.
+          Esmeralda, Gabriel, cuatro conductores de unidad, taxis y Uber en
+          ambas ciudades y dos clientes.
         </p>
         <p className="help">
           Repetir el mismo rango conserva las cuentas, contraseñas y salidas

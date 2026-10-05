@@ -210,3 +210,17 @@ CREATE TABLE IF NOT EXISTS parcel_events (
  FOREIGN KEY(parcel_id) REFERENCES parcels(id), FOREIGN KEY(actor_id) REFERENCES users(id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 INSERT IGNORE INTO schema_migrations(version) VALUES(3);
+
+-- A driver may take only one transfer from each interurban arrival, forever.
+CREATE TABLE IF NOT EXISTS local_arrival_assignments (
+ trip_id CHAR(36) NOT NULL, driver_id CHAR(36) NOT NULL, job_id CHAR(36) NOT NULL UNIQUE,
+ PRIMARY KEY(trip_id,driver_id), FOREIGN KEY(trip_id) REFERENCES trips(id),
+ FOREIGN KEY(driver_id) REFERENCES drivers(id), FOREIGN KEY(job_id) REFERENCES local_jobs(id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+-- Preserve assignments made before this rule, including completed transfers.
+INSERT IGNORE INTO local_arrival_assignments(trip_id,driver_id,job_id)
+SELECT b.trip_id,f.driver_id,MIN(j.id) FROM local_jobs j
+JOIN local_fleet f ON f.id=j.fleet_id JOIN last_mile_requests r ON r.id=j.request_id
+JOIN bookings b ON b.id=r.booking_id WHERE j.accepted_at IS NOT NULL
+GROUP BY b.trip_id,f.driver_id;
+INSERT IGNORE INTO schema_migrations(version) VALUES(4);

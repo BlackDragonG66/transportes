@@ -3,6 +3,7 @@ import { notify } from "./bookings.js";
 import { config } from "./config.js";
 import { isDemo } from "./demo.js";
 import { uuid, rapidInput, splitLocal } from "./domain.js";
+import { coversArrival } from "./local-cities.js";
 export async function requestLastMile(actor, bookingId, raw, db = pool) {
   uuid.parse(bookingId);
   const v = rapidInput.parse(raw);
@@ -81,6 +82,10 @@ export async function acceptLocal(actor, jobId, fleetId, db = pool) {
       lookup.booking_id,
     ]);
     if (b.status !== "confirmed") fail("Reserva no confirmada.", 409);
+    // Serialize the driver's acceptances even across different bookings or cars.
+    await c.query("SELECT id FROM drivers WHERE user_id=$1 FOR UPDATE", [
+      actor.id,
+    ]);
     await c.query("SELECT id FROM local_fleet WHERE id=$1 FOR UPDATE", [
       fleetId,
     ]);
@@ -106,9 +111,24 @@ export async function acceptLocal(actor, jobId, fleetId, db = pool) {
     if (
       job.passengers > fleet.capacity ||
       job.luggage > fleet.luggage_capacity ||
-      !job.destination.includes(fleet.city)
+      !coversArrival(fleet.city, job.destination)
     )
       fail("El vehículo no cubre la ciudad, pasajeros o maletas.", 409);
+    if (
+      await one(
+        c,
+        "SELECT job_id FROM local_arrival_assignments WHERE trip_id=$1 AND driver_id=$2",
+        [b.trip_id, fleet.driver_id],
+      )
+    )
+      fail(
+        "Ya aceptaste un viaje de esta llegada. Podrás aceptar otro de una llegada diferente.",
+        409,
+      );
+    await c.query(
+      "INSERT INTO local_arrival_assignments(trip_id,driver_id,job_id) VALUES($1,$2,$3)",
+      [b.trip_id, fleet.driver_id, job.id],
+    );
     await c.query(
       "UPDATE local_jobs SET fleet_id=$2,status='accepted',accepted_at=now(3) WHERE id=$1",
       [jobId, fleetId],

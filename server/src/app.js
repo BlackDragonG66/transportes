@@ -38,6 +38,7 @@ import {
   reconcilePayment,
 } from "./mercadopago.js";
 import { acceptLocal, requestLastMile } from "./local.js";
+import { coversArrival, localCities } from "./local-cities.js";
 import { pushSchema } from "./notifications.js";
 import {
   getSite,
@@ -556,17 +557,41 @@ app.get(
 app.get("/api/local/jobs", auth, role("driver", "admin"), async (req, res) => {
   const fleet = (
     await pool.query(
-      "SELECT f.* FROM local_fleet f JOIN drivers d ON d.id=f.driver_id WHERE d.user_id=$1 AND f.active",
-      [req.user.id],
+      "SELECT f.*,d.user_id AS owner_id,u.name AS driver_name FROM local_fleet f JOIN drivers d ON d.id=f.driver_id JOIN users u ON u.id=d.user_id WHERE (d.user_id=$1 OR $2='admin') AND f.active AND d.active",
+      [req.user.id, req.user.role],
     )
   ).rows;
   const jobs = (
     await pool.query(
-      `SELECT j.*,r.zone,t.arrival_at,rt.destination,CASE WHEN j.fleet_id IN (SELECT f.id FROM local_fleet f JOIN drivers d ON d.id=f.driver_id WHERE d.user_id=$1) THEN u.name END AS customer_name,CASE WHEN j.fleet_id IN (SELECT f.id FROM local_fleet f JOIN drivers d ON d.id=f.driver_id WHERE d.user_id=$1) THEN u.phone END AS customer_phone FROM local_jobs j JOIN last_mile_requests r ON r.id=j.request_id JOIN bookings b ON b.id=r.booking_id JOIN users u ON u.id=b.user_id JOIN trips t ON t.id=b.trip_id JOIN routes rt ON rt.id=t.route_id WHERE b.status='confirmed' AND (j.status='waiting' OR j.fleet_id IN (SELECT f.id FROM local_fleet f JOIN drivers d ON d.id=f.driver_id WHERE d.user_id=$1)) ORDER BY t.arrival_at`,
-      [req.user.id],
+      `SELECT j.*,b.trip_id,r.zone,t.arrival_at,rt.destination,f.model,f.city,du.name AS driver_name,d.user_id AS owner_id,CASE WHEN d.user_id=$1 OR $2='admin' THEN u.name END AS customer_name,CASE WHEN d.user_id=$1 OR $2='admin' THEN u.phone END AS customer_phone FROM local_jobs j JOIN last_mile_requests r ON r.id=j.request_id JOIN bookings b ON b.id=r.booking_id JOIN users u ON u.id=b.user_id JOIN trips t ON t.id=b.trip_id JOIN routes rt ON rt.id=t.route_id LEFT JOIN local_fleet f ON f.id=j.fleet_id LEFT JOIN drivers d ON d.id=f.driver_id LEFT JOIN users du ON du.id=d.user_id WHERE b.status='confirmed' AND (j.status='waiting' OR d.user_id=$1 OR $2='admin') ORDER BY t.arrival_at`,
+      [req.user.id, req.user.role],
     )
   ).rows;
-  res.json({ fleet, jobs });
+  const used = new Set(
+    (
+      await pool.query(
+        "SELECT a.trip_id FROM local_arrival_assignments a JOIN drivers d ON d.id=a.driver_id WHERE d.user_id=$1",
+        [req.user.id],
+      )
+    ).rows.map((a) => a.trip_id),
+  );
+  const eligible = jobs.filter(
+    (j) =>
+      req.user.role === "admin" ||
+      j.owner_id === req.user.id ||
+      (j.status === "waiting" &&
+        !used.has(j.trip_id) &&
+        fleet.some(
+          (f) =>
+            coversArrival(f.city, j.destination) &&
+            f.capacity >= j.passengers &&
+            f.luggage_capacity >= j.luggage,
+        )),
+  );
+  res.json({
+    fleet: fleet.map((f) => ({ ...f, owned: f.owner_id === req.user.id })),
+    jobs: eligible.map((j) => ({ ...j, owned: j.owner_id === req.user.id })),
+  });
 });
 app.post(
   "/api/local/jobs/:id/accept",
@@ -828,7 +853,7 @@ const adminSchemas = {
     driver_id: uuid,
     plate: z.string().min(3),
     model: z.string().min(2),
-    city: z.string().min(2),
+    city: z.enum(localCities),
     capacity: positive.max(4),
     luggage_capacity: z.number().int().min(0).max(30),
     active: z.boolean().default(true),

@@ -87,6 +87,8 @@ const profiles = [
   ["patricia", "Patricia López", "driver"],
   ["gabriel", "Gabriel Guzman Rodriguez", "driver"],
   ["lucia", "Lucía Ramírez", "driver"],
+  ["roberto", "Roberto Vega", "driver"],
+  ["diana", "Diana Flores", "driver"],
   ["ana", "Ana Martínez", "customer"],
   ["luis", "Luis Sánchez", "customer"],
 ];
@@ -188,6 +190,8 @@ export async function setupDemo(actor, raw, db = pool) {
       "patricia",
       "gabriel",
       "lucia",
+      "roberto",
+      "diana",
     ])
       drivers[key] = await entity(`driver:${key}`, "driver", "drivers", {
         user_id: users[key].id,
@@ -208,15 +212,17 @@ export async function setupDemo(actor, raw, db = pool) {
         capacity,
         plate: `DEMO-${key.toUpperCase()}`,
       });
-    for (const [key, model] of [
-      ["gabriel", "Hyundai Accent 2019 · rojo · Uber"],
-      ["lucia", "Toyota Avanza 2021 · blanco · Taxi"],
+    for (const [key, model, city] of [
+      ["gabriel", "Hyundai Accent 2019 · rojo · Uber", "Morelia"],
+      ["lucia", "Toyota Avanza 2021 · blanco · Taxi", "Morelia"],
+      ["roberto", "Nissan Versa 2020 · blanco · Taxi", "Apatzingán"],
+      ["diana", "Chevrolet Aveo 2018 · plata · Uber", "Apatzingán"],
     ])
       await entity(`fleet:${key}`, "fleet", "local_fleet", {
         driver_id: drivers[key].id,
         plate: `DEMO-${key.toUpperCase()}`,
         model,
-        city: "Morelia",
+        city,
         capacity: 4,
         luggage_capacity: 4,
       });

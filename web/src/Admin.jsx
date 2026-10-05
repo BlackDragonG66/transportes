@@ -19,7 +19,7 @@ const forms = {
       driver_id: "drivers",
       plate: "text",
       model: "text",
-      city: "text",
+      city: "localCities",
       capacity: "number",
       luggage_capacity: "number",
     },
@@ -220,6 +220,7 @@ export default function Admin({ onChanged }) {
                   "driverUsers",
                   "passenger_types",
                   "kind",
+                  "localCities",
                 ].includes(type) ? (
                   <div className="select is-fullwidth">
                     <select
@@ -230,10 +231,11 @@ export default function Admin({ onChanged }) {
                       }
                     >
                       <option value="">Selecciona</option>
-                      {type === "kind"
-                        ? ["interurban", "airport", "medical"].map((v) => (
-                            <option key={v}>{v}</option>
-                          ))
+                      {type === "kind" || type === "localCities"
+                        ? (type === "kind"
+                            ? ["interurban", "airport", "medical"]
+                            : ["Morelia", "Apatzingán"]
+                          ).map((v) => <option key={v}>{v}</option>)
                         : resources?.[type].map((r) => (
                             <option key={r.id} value={r.id}>
                               {label(r)}

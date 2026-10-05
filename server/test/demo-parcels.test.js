@@ -10,6 +10,8 @@ import { pool, one, transaction, insert } from "../src/db.js";
 import { app } from "../src/app.js";
 import { setupDemo, demoAccounts, payDemo, markDemo } from "../src/demo.js";
 import { createBooking } from "../src/bookings.js";
+import { acceptLocal, requestLastMile } from "../src/local.js";
+import { coversArrival } from "../src/local-cities.js";
 import { openCash, closeCash, cashSales } from "../src/cash.js";
 import {
   reserveParcel,
@@ -47,12 +49,235 @@ const parcel = (tripId) => ({
   heightCm: 20,
   declaredCents: 10000,
 });
+
+async function confirmedLocalBooking(f, count = 5) {
+  const cash = await openCash(
+    f.cashier,
+    { registerId: f.register.id, openingCents: 0 },
+    db,
+  );
+  const b = await createBooking(
+    f.cashier,
+    {
+      tripId: f.trip.id,
+      channel: "pos",
+      cashSessionId: cash.id,
+      customerId: f.u.id,
+      passengers: [{ id: f.type.id, quantity: count }],
+      travelers: travelers(f.type.id, count),
+    },
+    randomUUID(),
+    db,
+  );
+  const r = await requestLastMile(
+    f.u,
+    b.id,
+    {
+      zone: "Zona de prueba",
+      passengers: count,
+      luggage: 2,
+      vehicles: Math.ceil(count / 4),
+    },
+    db,
+  );
+  return {
+    b,
+    jobs: (
+      await db.query("SELECT * FROM local_jobs WHERE request_id=$1", [r.id])
+    ).rows,
+  };
+}
+const localFleet = (driver, city) =>
+  insert(db, "local_fleet", {
+    driver_id: driver.id,
+    model: "Taxi de prueba",
+    plate: randomUUID(),
+    city,
+    capacity: 4,
+    luggage_capacity: 4,
+  });
+const localCall = (user, method = "get", path = "/local/jobs", body) =>
+  request(app)
+    [method](`/api${path}`)
+    .set("Origin", "http://localhost:5173")
+    .set(
+      "Cookie",
+      `session=${jwt.sign({ sub: user.id }, config.secret, { issuer: "conexiones", audience: "conexiones-web", expiresIn: "1h" })}`,
+    )
+    .send(body);
+
+test("Un chofer acepta una sola solicitud por llegada: carrera entre dos autos, traslado terminado y siguiente llegada", async () => {
+  const f = await fixture(db, 6),
+    next = await fixture(db, 6),
+    driver = await fixture(db);
+  const cars = await Promise.all([
+    localFleet(driver.driver, "Morelia"),
+    localFleet(driver.driver, "Morelia"),
+  ]);
+  const { jobs } = await confirmedLocalBooking(f);
+  const race = await Promise.allSettled(
+    jobs.map((j, i) => acceptLocal(driver.driverUser, j.id, cars[i].id, db)),
+  );
+  assert.equal(race.filter((r) => r.status === "fulfilled").length, 1);
+  assert.match(
+    race.find((r) => r.status === "rejected").reason.message,
+    /Ya aceptaste/,
+  );
+  const accepted = race.find((r) => r.status === "fulfilled").value;
+  const waiting = jobs.find((j) => j.id !== accepted.id);
+  await localCall(
+    driver.driverUser,
+    "post",
+    `/local/jobs/${accepted.id}/complete`,
+    {},
+  ).expect(200);
+  await assert.rejects(
+    acceptLocal(driver.driverUser, waiting.id, cars[1].id, db),
+    /Ya aceptaste/,
+  );
+  const offered = (
+    await localCall(driver.driverUser).expect(200)
+  ).body.jobs.filter((j) => j.trip_id === f.trip.id);
+  assert.equal(offered.length, 1);
+  assert.equal(offered[0].status, "completed");
+  assert.equal(
+    (
+      await one(
+        db,
+        "SELECT count(*) AS n FROM local_arrival_assignments WHERE trip_id=$1 AND driver_id=$2",
+        [f.trip.id, driver.driver.id],
+      )
+    ).n,
+    1,
+  );
+  // A different customer's request from the same unit arrival remains blocked.
+  const s = await one(
+    db,
+    "SELECT * FROM cash_sessions WHERE cashier_id=$1 AND closed_at IS NULL",
+    [f.cashier.id],
+  );
+  const b2 = await createBooking(
+    f.cashier,
+    {
+      tripId: f.trip.id,
+      channel: "pos",
+      customerId: f.u.id,
+      cashSessionId: s.id,
+      passengers: [{ id: f.type.id, quantity: 1 }],
+      travelers: travelers(f.type.id, 1),
+    },
+    randomUUID(),
+    db,
+  );
+  const r2 = await requestLastMile(
+    f.u,
+    b2.id,
+    { zone: "Otra colonia", passengers: 1, luggage: 0, vehicles: 1 },
+    db,
+  );
+  const j2 = await one(db, "SELECT id FROM local_jobs WHERE request_id=$1", [
+    r2.id,
+  ]);
+  await assert.rejects(
+    acceptLocal(driver.driverUser, j2.id, cars[0].id, db),
+    /Ya aceptaste/,
+  );
+  const nextJobs = (await confirmedLocalBooking(next)).jobs;
+  assert.ok(
+    (await localCall(driver.driverUser).expect(200)).body.jobs.some(
+      (j) => j.trip_id === next.trip.id && j.status === "waiting",
+    ),
+  );
+  assert.equal(
+    (await acceptLocal(driver.driverUser, nextJobs[0].id, cars[0].id, db))
+      .status,
+    "accepted",
+  );
+});
+
+test("Taxis y Uber ven y aceptan solamente llegadas de su ciudad; sin coincidencias parciales", async () => {
+  const morelia = await fixture(db, 6),
+    apatz = await fixture(db, 6),
+    dm = await fixture(db),
+    da = await fixture(db);
+  await db.query("UPDATE routes SET destination='Apatzingán' WHERE id=$1", [
+    apatz.route.id,
+  ]);
+  const cm = await localFleet(dm.driver, "Morelia"),
+    ca = await localFleet(da.driver, "Apatzingán");
+  const jm = (await confirmedLocalBooking(morelia)).jobs,
+    ja = (await confirmedLocalBooking(apatz)).jobs;
+  const visibleM = (await localCall(dm.driverUser).expect(200)).body.jobs;
+  const visibleA = (await localCall(da.driverUser).expect(200)).body.jobs;
+  assert.equal(visibleM.filter((j) => j.trip_id === morelia.trip.id).length, 2);
+  assert.ok(!visibleM.some((j) => j.trip_id === apatz.trip.id));
+  assert.equal(visibleA.filter((j) => j.trip_id === apatz.trip.id).length, 2);
+  assert.ok(!visibleA.some((j) => j.trip_id === morelia.trip.id));
+  await assert.rejects(
+    acceptLocal(dm.driverUser, ja[0].id, cm.id, db),
+    /no cubre la ciudad/,
+  );
+  await assert.rejects(
+    acceptLocal(da.driverUser, jm[0].id, ca.id, db),
+    /no cubre la ciudad/,
+  );
+  assert.equal(
+    (
+      await one(
+        db,
+        "SELECT count(*) AS n FROM local_arrival_assignments WHERE trip_id IN ($1,$2)",
+        [morelia.trip.id, apatz.trip.id],
+      )
+    ).n,
+    0,
+  );
+  await db.query("UPDATE local_fleet SET city='More' WHERE id=$1", [cm.id]);
+  await assert.rejects(
+    acceptLocal(dm.driverUser, jm[0].id, cm.id, db),
+    /no cubre la ciudad/,
+  );
+  await db.query("UPDATE local_fleet SET city='Morelia' WHERE id=$1", [cm.id]);
+  assert.equal(
+    (await acceptLocal(dm.driverUser, jm[0].id, cm.id, db)).status,
+    "accepted",
+  );
+  assert.equal(
+    (await acceptLocal(da.driverUser, ja[0].id, ca.id, db)).status,
+    "accepted",
+  );
+  for (const destination of [
+    "Morelia",
+    "Aeropuerto de Morelia",
+    "CREE Morelia",
+    "Teletón Morelia",
+  ]) {
+    assert.equal(coversArrival("Morelia", destination), true);
+    assert.equal(coversArrival("Apatzingán", destination), false);
+  }
+  assert.equal(coversArrival("Morelia", "Morelia falsa"), false);
+  assert.equal(coversArrival("More", "Morelia"), false);
+  assert.equal(coversArrival("Morelia", "Apatzingán"), false);
+  await db.query("UPDATE users SET role='admin' WHERE id=$1", [
+    morelia.cashier.id,
+  ]);
+  const oversight = (await localCall(morelia.cashier).expect(200)).body.jobs;
+  assert.ok(oversight.some((j) => j.id === jm[0].id && j.customer_name));
+  assert.ok(oversight.some((j) => j.id === ja[0].id && j.customer_name));
+  await localCall(morelia.cashier, "post", "/admin/local_fleet", {
+    driver_id: dm.driver.id,
+    model: "Otra unidad",
+    plate: randomUUID(),
+    city: "More",
+    capacity: 4,
+    luggage_capacity: 4,
+  }).expect(400);
+});
 test("21 días DEMO: usuarios solicitados, salidas sin solapamientos e instalación repetible sin cambiar contraseñas", async () => {
   const f = await fixture(db),
     actor = { ...f.cashier, role: "admin" },
     startDate = addDays(mexicoDay(), 1);
   const seeded = await setupDemo(actor, { startDate }, db);
-  assert.equal(seeded.credentials.length, 10);
+  assert.equal(seeded.credentials.length, 12);
   assert.equal(seeded.tripsCreated, 150);
   const accounts = await demoAccounts(db);
   assert.ok(
@@ -66,6 +291,16 @@ test("21 días DEMO: usuarios solicitados, salidas sin solapamientos e instalaci
     "SELECT f.* FROM local_fleet f JOIN drivers d ON d.id=f.driver_id JOIN users u ON u.id=d.user_id WHERE u.email='gabriel@demo.conexiones.test'",
   );
   assert.match(gabriel.model, /Hyundai Accent 2019.*rojo.*Uber/);
+  assert.equal(gabriel.city, "Morelia");
+  assert.equal(
+    (
+      await one(
+        db,
+        "SELECT count(*) AS n FROM local_fleet f JOIN demo_entities de ON de.entity_id=f.id AND de.kind='fleet' WHERE f.city='Apatzingán'",
+      )
+    ).n,
+    2,
+  );
   const u = await one(
     db,
     "SELECT * FROM users WHERE email='jonathan@demo.conexiones.test'",
