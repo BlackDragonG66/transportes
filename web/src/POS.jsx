@@ -21,7 +21,9 @@ export default function POS({ user }) {
   useEffect(() => {
     load();
   }, []);
-  const active = data?.sessions.find((s) => !s.closed_at);
+  const active = data?.sessions.find(
+    (s) => !s.closed_at && s.cashier_id === user.id,
+  );
   async function action(path, body) {
     setBusy(true);
     setError("");
@@ -194,7 +196,9 @@ export default function POS({ user }) {
       )}
       {report && (
         <div className="box">
-          <h2 className="title is-4">Corte de turno</h2>
+          <h2 className="title is-4">
+            {report.closed_at ? "Corte de turno" : "Reporte de caja abierta"}
+          </h2>
           <p>
             Ventas: {money(report.salesCents ?? report.sales_cents)} · Esperado:{" "}
             {money(
@@ -202,10 +206,14 @@ export default function POS({ user }) {
                 report.opening_cents + report.sales_cents,
             )}
           </p>
-          <p>
-            Contado: {money(report.counted_cents || 0)} · Diferencia:{" "}
-            {money(report.difference_cents || 0)}
-          </p>
+          {report.closed_at ? (
+            <p>
+              Contado: {money(report.counted_cents || 0)} · Diferencia:{" "}
+              {money(report.difference_cents || 0)}
+            </p>
+          ) : (
+            <p>Turno abierto · Conteo y diferencia pendientes al cerrar.</p>
+          )}
           {report.sales && (
             <div className="table-container">
               <table className="table is-fullwidth">
@@ -235,7 +243,8 @@ export default function POS({ user }) {
       <h2 className="title is-5">Turnos recientes</h2>
       {data.sessions.map((s) => (
         <p className="mb-2" key={s.id}>
-          {date(s.opened_at)} · {s.closed_at ? "Cerrado" : "Abierto"}{" "}
+          {s.cashier_name} · {s.register_name} · {date(s.opened_at)} ·{" "}
+          {s.closed_at ? "Cerrado" : "Abierto"}{" "}
           <button
             className="button is-small"
             onClick={async () => {

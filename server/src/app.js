@@ -452,8 +452,8 @@ app.get("/api/cash", auth, role("cashier", "admin"), async (req, res) => {
       [req.user.id, req.user.role === "admin"],
     ),
     pool.query(
-      "SELECT * FROM cash_sessions WHERE cashier_id=$1 ORDER BY opened_at DESC LIMIT 30",
-      [req.user.id],
+      "SELECT s.*,u.name AS cashier_name,r.name AS register_name FROM cash_sessions s JOIN users u ON u.id=s.cashier_id JOIN cash_registers r ON r.id=s.register_id WHERE s.cashier_id=$1 OR $2 ORDER BY s.opened_at DESC LIMIT 30",
+      [req.user.id, req.user.role === "admin"],
     ),
     pool.query(
       "SELECT id,name,email FROM users WHERE role='customer' ORDER BY name LIMIT 500",

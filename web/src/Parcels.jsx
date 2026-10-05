@@ -103,7 +103,9 @@ export default function Parcels({ user }) {
     );
     return () => clearInterval(timer);
   }, []);
-  const active = cash?.sessions.find((s) => !s.closed_at),
+  const active = cash?.sessions.find(
+      (s) => !s.closed_at && s.cashier_id === user.id,
+    ),
     selected = catalog?.trips.find((t) => t.id === v.tripId),
     estimated = settings
       ? settings.base_cents +

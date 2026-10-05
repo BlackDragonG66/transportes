@@ -494,6 +494,19 @@ test("Recorrido HTTP completo: cliente, cajera, conductor, Uber y entrega; datos
   assert.equal(closed.salesCents, 137000);
   assert.equal(closed.difference_cents, 0);
   assert.equal(closed.transactions, 2);
+  const peerCash = (await call("get", "/cash", other.cashier).expect(200)).body;
+  assert.ok(!peerCash.sessions.some((row) => row.id === s.id));
+  await db.query("UPDATE users SET role='admin' WHERE id=$1", [
+    other.cashier.id,
+  ]);
+  const adminCash = (await call("get", "/cash", other.cashier).expect(200))
+    .body;
+  assert.ok(
+    adminCash.sessions.some(
+      (row) => row.id === s.id && row.cashier_name === f.cashier.name,
+    ),
+  );
+  await call("get", `/cash/${s.id}/report`, other.cashier).expect(200);
   await call(
     "post",
     `/local/jobs/${jobs[0].id}/complete`,
