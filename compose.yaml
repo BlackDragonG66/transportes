@@ -1,18 +1,19 @@
 services:
   db:
-    image: postgres:17-alpine
+    image: mariadb:11.4
     environment:
-      POSTGRES_DB: conexiones
-      POSTGRES_USER: conexiones
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-conexiones}
-    ports: ["127.0.0.1:5432:5432"]
-    volumes: ["pgdata:/var/lib/postgresql/data"]
+      MARIADB_DATABASE: conexiones
+      MARIADB_USER: conexiones
+      MARIADB_PASSWORD: local-dev-only
+      MARIADB_ROOT_PASSWORD: local-root-only
+    ports: ["127.0.0.1:3306:3306"]
+    volumes: ["mysqldata:/var/lib/mysql"]
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U conexiones"]
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
       interval: 5s
       retries: 10
   mail:
     image: axllent/mailpit:latest
     ports: ["127.0.0.1:1025:1025", "127.0.0.1:8025:8025"]
 volumes:
-  pgdata:
+  mysqldata:

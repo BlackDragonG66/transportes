@@ -1,0 +1,32 @@
+# ConexionES en Hostinger
+
+Motor: MySQL 8.0.16+ o MariaDB 10.6+, con tablas InnoDB. La instalación crea las tablas dentro de la base indicada; no necesita permisos para crear bases, usuarios ni servicios.
+
+Configuración del despliegue:
+
+| Campo | Valor |
+|---|---|
+| Marco | Express (u Other con archivo de entrada) |
+| Rama | master |
+| Node | 24.x |
+| Raíz | ./ |
+| Salida | . |
+| Archivo de entrada | server/src/index.js |
+| Compilación | npm ci --include=dev && npm run build && npm run db:migrate |
+| Inicio | npm start |
+
+Variables obligatorias: `DB_HOST`, `DB_PORT` (3306), `DB_USER`, `DB_PASSWORD`, `DB_NAME`, `SESSION_SECRET`, `APP_URL` y `PUBLIC_API_URL`. Usa el servidor, usuario y nombre de base exactos de hPanel. `DATABASE_URL` es una alternativa opcional con protocolo `mysql://`; si existe, tiene prioridad sobre `DB_*`.
+
+`MP_ENABLED=false` mantiene Mercado Pago pendiente: no se crean reservas web ni preferencias de pago, ni se consultan pagos externos. Para activarlo, completa `MP_ACCESS_TOKEN`, `MP_WEBHOOK_SECRET`, `MP_COLLECTOR_ID` y cambia `MP_ENABLED=true`.
+
+`EMAIL_ENABLED=false` mantiene el correo pendiente: no se realizan conexiones SMTP ni se marcan mensajes como enviados. Las notificaciones quedan en la cola para entrega cuando actives el correo. Completa `SMTP_HOST`, `SMTP_PORT`, `SMTP_SECURE`, `SMTP_USER`, `SMTP_PASS`, `MAIL_FROM` y cambia `EMAIL_ENABLED=true`. Los enlaces de acceso vencen en 24 horas; tras configurar el correo, un enlace nuevo puede solicitarse con Recuperar acceso.
+
+Taquilla, caja, boletos QR, tracking y Viaje Rápido siguen disponibles con ambas integraciones pendientes. Web Push funciona independientemente si tiene sus claves VAPID.
+
+La migración instala un catálogo inicial y conserva las tarifas existentes en ejecuciones posteriores. No importa automáticamente datos de una instalación previa en PostgreSQL.
+
+Pruebas: `npm test` crea un MySQL temporal. Con `TEST_DATABASE_URL=mysql://.../conexiones_test`, utiliza una base de pruebas existente cuyo nombre debe terminar en `_test`. CI comprueba tanto MySQL como MariaDB.
+
+Credenciales privadas: el `.env` local está excluido de Git y no se publica en GitHub. Importa su contenido en las variables de entorno de Hostinger y sustituye los datos de conexión pendientes.
+
+Referencia de conexión: [Hostinger y MySQL para Node.js](https://www.hostinger.com/support/connecting-a-hostinger-mysql-database-to-a-node-js-application/).

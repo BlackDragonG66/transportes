@@ -6,8 +6,8 @@ import bcrypt from 'bcryptjs';
 import { randomBytes,createHash } from 'node:crypto';
 import QRCode from 'qrcode';
 import { z } from 'zod';
-import { config } from './config.js';
-import { pool,one,fail,transaction } from './db.js';
+import { config,integrationStatus } from './config.js';
+import { pool,one,fail,transaction,insert } from './db.js';
 import { auth,role,session,cookieOptions } from './auth.js';
 import { uuid } from './domain.js';
 import { createBooking,notify } from './bookings.js';
@@ -26,11 +26,13 @@ app.use((req,res,next)=>{
  next();
 });
 app.get('/api/health',async(req,res)=>{await pool.query('SELECT 1');res.json({ok:true});});
+app.get('/api/integrations',(req,res)=>res.json(integrationStatus()));
+function safeUser(user){const {password_hash,...safe}=user;return safe;}
 const loginLimit=rateLimit({windowMs:15*60000,limit:20,standardHeaders:'draft-8',legacyHeaders:false});
 const credentials=z.object({email:z.email().max(254).transform(x=>x.toLowerCase()),password:z.string().min(12).max(72).refine(x=>Buffer.byteLength(x,'utf8')<=72,'Contraseña: máximo 72 bytes.')});
 app.post('/api/auth/register',loginLimit,async(req,res)=>{
  const v=credentials.extend({name:z.string().trim().min(2).max(120),phone:z.string().trim().min(8).max(25)}).strict().parse(req.body);
- const u=await one(pool,'INSERT INTO users(name,email,phone,password_hash) VALUES($1,$2,$3,$4) RETURNING id,name,email,phone,role',[v.name,v.email,v.phone,await bcrypt.hash(v.password,12)]);
+ const u=safeUser(await insert(pool,'users',{name:v.name,email:v.email,phone:v.phone,password_hash:await bcrypt.hash(v.password,12)}));
  session(res,u);res.status(201).json(u);
 });
 app.post('/api/auth/login',loginLimit,async(req,res)=>{
@@ -46,15 +48,17 @@ app.post('/api/auth/activate',loginLimit,async(req,res)=>{
  const user=await transaction(async c=>{
   const token=await one(c,'SELECT * FROM account_tokens WHERE token_hash=$1 AND used_at IS NULL AND expires_at>now() FOR UPDATE',[hash]);if(!token)fail('Enlace de acceso vencido o utilizado.',400);
   await c.query('UPDATE account_tokens SET used_at=now() WHERE token_hash=$1',[hash]);
-  return one(c,'UPDATE users SET password_hash=$2 WHERE id=$1 RETURNING id,name,email,phone,role',[token.user_id,password]);
+  await c.query('UPDATE users SET password_hash=$2 WHERE id=$1',[token.user_id,password]);
+  return safeUser(await one(c,'SELECT * FROM users WHERE id=$1',[token.user_id]));
  });session(res,user);res.json(user);
 });
 app.post('/api/auth/recover',loginLimit,async(req,res)=>{
+ if(!integrationStatus().email)fail('La recuperación por correo está pendiente de configuración. Contacta a taquilla.',503);
  const {email}=z.object({email:credentials.shape.email}).strict().parse(req.body);
  const user=await one(pool,'SELECT id FROM users WHERE email=$1',[email]);
  if(user)await transaction(async c=>{
   const token=randomBytes(32).toString('hex'),hash=createHash('sha256').update(token).digest('hex');
-  await c.query('INSERT INTO account_tokens(token_hash,user_id) VALUES($1,$2)',[hash,user.id]);
+  await c.query('INSERT INTO account_tokens(token_hash,user_id,expires_at) VALUES($1,$2,DATE_ADD(now(3),INTERVAL 24 HOUR))',[hash,user.id]);
   await notify(c,user.id,'Acceso a ConexionES','Este enlace permite establecer tu contraseña y vence en 24 horas.',`${config.appUrl}/activate/${token}`,`account:${hash}`);
  });res.json({message:'Si el correo está registrado, recibirás un enlace de acceso.'});
 });
@@ -63,13 +67,14 @@ app.get('/api/auth/me',auth,(req,res)=>res.json(req.user));
 app.get('/api/catalog',async(req,res)=>{
  const [routes,types,fares,addons,trips]=await Promise.all([
   pool.query('SELECT * FROM routes WHERE active'),pool.query('SELECT * FROM passenger_types'),pool.query('SELECT * FROM fares'),pool.query('SELECT * FROM addons WHERE active'),
-  pool.query(`SELECT t.*,r.origin,r.destination,v.brand,v.model,v.plate,t.capacity-COALESCE((SELECT sum(b.passengers) FROM bookings b WHERE b.trip_id=t.id AND (b.status='confirmed' OR (b.status='pending' AND b.expires_at>now()))),0)::int AS available FROM trips t JOIN routes r ON r.id=t.route_id JOIN vehicles v ON v.id=t.vehicle_id WHERE t.departure_at>now() AND t.status='scheduled' ORDER BY departure_at`)
- ]);res.json({routes:routes.rows,types:types.rows,fares:fares.rows,addons:addons.rows,trips:trips.rows});
+  pool.query(`SELECT t.*,r.origin,r.destination,v.brand,v.model,v.plate,t.capacity-COALESCE((SELECT sum(b.passengers) FROM bookings b WHERE b.trip_id=t.id AND (b.status='confirmed' OR (b.status='pending' AND b.expires_at>now()))),0) AS available FROM trips t JOIN routes r ON r.id=t.route_id JOIN vehicles v ON v.id=t.vehicle_id WHERE t.departure_at>now() AND t.status='scheduled' ORDER BY departure_at`)
+ ]);res.json({routes:routes.rows,types:types.rows,fares:fares.rows,addons:addons.rows,trips:trips.rows,integrations:integrationStatus()});
 });
 app.post('/api/bookings',auth,async(req,res)=>res.status(201).json(await createBooking(req.user,req.body,req.get('idempotency-key'))));
 app.get('/api/bookings',auth,async(req,res)=>res.json((await pool.query('SELECT * FROM bookings WHERE user_id=$1 ORDER BY created_at DESC',[req.user.id])).rows));
 app.post('/api/bookings/:id/preference',auth,async(req,res)=>{uuid.parse(req.params.id);res.json(await createPreference(req.user,req.params.id));});
 app.post('/api/payments/webhook',async(req,res)=>{
+ if(!integrationStatus().payments)fail('Los pagos online están pendientes de configuración.',503);
  const id=req.query['data.id'];
  if(typeof id!=='string'||!/^\d+$/.test(id)||!validSignature(id,req.get('x-request-id'),req.get('x-signature')))fail('Firma inválida.',401);
  const payment=await mpRequest(`/v1/payments/${encodeURIComponent(id)}`);
@@ -85,9 +90,9 @@ app.post('/api/cash/customers',auth,role('cashier','admin'),async(req,res)=>{
  const existing=await one(pool,"SELECT id,name,email FROM users WHERE email=$1 AND role='customer'",[v.email]);if(existing)return res.json(existing);
  const password=await bcrypt.hash(randomBytes(32).toString('hex'),12);
  const customer=await transaction(async c=>{
-  const user=await one(c,"INSERT INTO users(name,email,phone,password_hash) VALUES($1,$2,$3,$4) RETURNING id,name,email",[v.name,v.email,v.phone,password]);
+  const user=safeUser(await insert(c,'users',{name:v.name,email:v.email,phone:v.phone,password_hash:password}));
   const token=randomBytes(32).toString('hex'),hash=createHash('sha256').update(token).digest('hex');
-  await c.query('INSERT INTO account_tokens(token_hash,user_id) VALUES($1,$2)',[hash,user.id]);
+  await c.query('INSERT INTO account_tokens(token_hash,user_id,expires_at) VALUES($1,$2,DATE_ADD(now(3),INTERVAL 24 HOUR))',[hash,user.id]);
   await notify(c,user.id,'Bienvenido a ConexionES','Establece tu contraseña para consultar tus boletos. El enlace vence en 24 horas.',`${config.appUrl}/activate/${token}`,`account:${hash}`);return user;
  });res.status(201).json(customer);
 });
@@ -99,17 +104,17 @@ app.get('/api/cash/:id/report',auth,role('cashier','admin'),async(req,res)=>{
 });
 app.get('/api/local/jobs',auth,role('driver','admin'),async(req,res)=>{
  const fleet=(await pool.query('SELECT f.* FROM local_fleet f JOIN drivers d ON d.id=f.driver_id WHERE d.user_id=$1 AND f.active',[req.user.id])).rows;
- const jobs=(await pool.query(`SELECT j.*,r.zone,t.arrival_at,rt.destination FROM local_jobs j JOIN last_mile_requests r ON r.id=j.request_id JOIN bookings b ON b.id=r.booking_id JOIN trips t ON t.id=b.trip_id JOIN routes rt ON rt.id=t.route_id WHERE b.status='confirmed' AND (j.status='waiting' OR j.fleet_id=ANY($1::uuid[])) ORDER BY t.arrival_at`,[fleet.map(x=>x.id)])).rows;
+ const jobs=(await pool.query(`SELECT j.*,r.zone,t.arrival_at,rt.destination FROM local_jobs j JOIN last_mile_requests r ON r.id=j.request_id JOIN bookings b ON b.id=r.booking_id JOIN trips t ON t.id=b.trip_id JOIN routes rt ON rt.id=t.route_id WHERE b.status='confirmed' AND (j.status='waiting' OR j.fleet_id IN (SELECT f.id FROM local_fleet f JOIN drivers d ON d.id=f.driver_id WHERE d.user_id=$1)) ORDER BY t.arrival_at`,[req.user.id])).rows;
  res.json({fleet,jobs});
 });
 app.post('/api/local/jobs/:id/accept',auth,role('driver','admin'),async(req,res)=>{const v=z.object({fleetId:uuid}).strict().parse(req.body);res.json(await acceptLocal(req.user,req.params.id,v.fleetId));});
 app.post('/api/local/jobs/:id/complete',auth,role('driver','admin'),async(req,res)=>{
- uuid.parse(req.params.id);const j=await one(pool,`UPDATE local_jobs j SET status='completed' FROM local_fleet f,drivers d WHERE j.id=$1 AND j.fleet_id=f.id AND f.driver_id=d.id AND d.user_id=$2 AND j.status='accepted' RETURNING j.*`,[req.params.id,req.user.id]);if(!j)fail('Viaje no disponible.',409);res.json(j);
+ uuid.parse(req.params.id);const result=await pool.query(`UPDATE local_jobs j JOIN local_fleet f ON j.fleet_id=f.id JOIN drivers d ON f.driver_id=d.id SET j.status='completed' WHERE j.id=$1 AND d.user_id=$2 AND j.status='accepted'`,[req.params.id,req.user.id]);if(!result.affectedRows)fail('Viaje no disponible.',409);res.json(await one(pool,'SELECT * FROM local_jobs WHERE id=$1',[req.params.id]));
 });
 app.get('/api/push/key',auth,(req,res)=>res.json({key:process.env.VAPID_PUBLIC_KEY||null}));
 app.post('/api/push/subscribe',auth,async(req,res)=>{
  const s=pushSchema.parse(req.body);
- await pool.query('INSERT INTO push_subscriptions(user_id,endpoint,subscription) VALUES($1,$2,$3) ON CONFLICT(endpoint) DO UPDATE SET user_id=EXCLUDED.user_id,subscription=EXCLUDED.subscription',[req.user.id,s.endpoint,JSON.stringify(s)]);res.sendStatus(201);
+ await pool.query('INSERT INTO push_subscriptions(user_id,endpoint,endpoint_hash,subscription) VALUES($1,$2,$3,$4) ON DUPLICATE KEY UPDATE user_id=VALUES(user_id),subscription=VALUES(subscription)',[req.user.id,s.endpoint,createHash('sha256').update(s.endpoint).digest('hex'),JSON.stringify(s)]);res.sendStatus(201);
 });
 app.delete('/api/push/subscribe',auth,async(req,res)=>{const {endpoint}=z.object({endpoint:z.string().url()}).parse(req.body);await pool.query('DELETE FROM push_subscriptions WHERE endpoint=$1 AND user_id=$2',[endpoint,req.user.id]);res.sendStatus(204);});
 async function publicTrip(where,value) {
@@ -121,7 +126,7 @@ app.get('/api/ticket/:token',auth,async(req,res)=>{
  uuid.parse(req.params.token);const b=await one(pool,`SELECT b.* FROM bookings b WHERE ticket_token=$1 AND (user_id=$2 OR created_by=$2 OR $3 OR EXISTS(SELECT 1 FROM trips t JOIN drivers d ON d.id=t.driver_id WHERE t.id=b.trip_id AND d.user_id=$2))`,[req.params.token,req.user.id,req.user.role==='admin']);if(!b)fail('Boleto inexistente.',404);
  const trip=await publicTrip('t.id=$1',b.trip_id);
  const local=(await pool.query(`SELECT j.status,j.passengers,j.luggage,r.zone,f.model,f.plate,u.name AS driver_name,u.phone,d.photo_url FROM last_mile_requests r JOIN local_jobs j ON j.request_id=r.id LEFT JOIN local_fleet f ON f.id=j.fleet_id LEFT JOIN drivers d ON d.id=f.driver_id LEFT JOIN users u ON u.id=d.user_id WHERE r.booking_id=$1`,[b.id])).rows;
- res.json({booking:b,trip,local,qr:await QRCode.toDataURL(`${config.appUrl}/ticket/${b.ticket_token}`)});
+ res.json({booking:b,trip,local,integrations:integrationStatus(),qr:await QRCode.toDataURL(`${config.appUrl}/ticket/${b.ticket_token}`)});
 });
 app.post('/api/ticket/:token/board',auth,role('driver','admin'),async(req,res)=>{
  uuid.parse(req.params.token);const b=await transaction(async c=>{
@@ -130,7 +135,7 @@ app.post('/api/ticket/:token/board',auth,role('driver','admin'),async(req,res)=>
   if(req.user.role!=='admin'&&trip.user_id!==req.user.id)fail('No eres el conductor de este viaje.',403);
   if(trip.status!=='boarding')fail('El viaje no está en abordaje.',409);
   if(b.boarded_at)fail('Boleto ya utilizado.',409);
-  return one(c,'UPDATE bookings SET boarded_at=now() WHERE id=$1 RETURNING *',[b.id]);
+  await c.query('UPDATE bookings SET boarded_at=now(3) WHERE id=$1',[b.id]);return one(c,'SELECT * FROM bookings WHERE id=$1',[b.id]);
  });res.json(b);
 });
 app.get('/api/admin/resources',auth,role('admin'),async(req,res)=>{
@@ -148,7 +153,7 @@ const adminSchemas={
  local_fleet:z.object({driver_id:uuid,plate:z.string().min(3),model:z.string().min(2),city:z.string().min(2),capacity:positive.max(4),luggage_capacity:z.number().int().min(0).max(30),active:z.boolean().default(true)}),
  trips:z.object({route_id:uuid,vehicle_id:uuid,driver_id:uuid,departure_at:z.iso.datetime({offset:true}),arrival_at:z.iso.datetime({offset:true}),capacity:positive.max(60)})
 };
-app.post('/api/admin/fares',auth,role('admin'),async(req,res)=>{const v=z.object({route_id:uuid,passenger_type_id:uuid,price_cents:money}).strict().parse(req.body);res.json(await one(pool,'INSERT INTO fares VALUES($1,$2,$3) ON CONFLICT(route_id,passenger_type_id) DO UPDATE SET price_cents=EXCLUDED.price_cents RETURNING *',Object.values(v)));});
+app.post('/api/admin/fares',auth,role('admin'),async(req,res)=>{const v=z.object({route_id:uuid,passenger_type_id:uuid,price_cents:money}).strict().parse(req.body);await pool.query('INSERT INTO fares VALUES($1,$2,$3) ON DUPLICATE KEY UPDATE price_cents=VALUES(price_cents)',Object.values(v));res.json(await one(pool,'SELECT * FROM fares WHERE route_id=$1 AND passenger_type_id=$2',[v.route_id,v.passenger_type_id]));});
 app.post('/api/admin/:table',auth,role('admin'),async(req,res)=>{
  const table=req.params.table,schema=adminSchemas[table];if(!schema)fail('Recurso inválido.',404);const v=schema.strict().parse(req.body);
  const result=await transaction(async c=>{
@@ -159,20 +164,23 @@ app.post('/api/admin/:table',auth,role('admin'),async(req,res)=>{
    const overlap=await one(c,`SELECT id FROM trips WHERE status<>'cancelled' AND (vehicle_id=$1 OR driver_id=$2) AND departure_at<$4 AND arrival_at>$3 LIMIT 1`,[v.vehicle_id,v.driver_id,v.departure_at,v.arrival_at]);if(overlap)fail('Conductor o unidad ocupados en ese horario.',409);
   }
   if(table==='drivers') {const u=await one(c,"SELECT id FROM users WHERE id=$1 AND role IN ('driver','admin')",[v.user_id]);if(!u)fail('El usuario debe ser conductor.');}
-  const fields=Object.keys(v);return one(c,`INSERT INTO ${table}(${fields.join(',')}) VALUES(${fields.map((_,i)=>`$${i+1}`).join(',')}) RETURNING *`,Object.values(v));
+  if(table==='trips'){v.departure_at=new Date(v.departure_at);v.arrival_at=new Date(v.arrival_at);}
+  return insert(c,table,v);
  });res.status(201).json(result);
 });
-app.patch('/api/admin/addons/:id',auth,role('admin'),async(req,res)=>{uuid.parse(req.params.id);const v=adminSchemas.addons.strict().parse(req.body);res.json(await one(pool,'UPDATE addons SET name=$2,price_cents=$3,active=$4 WHERE id=$1 RETURNING *',[req.params.id,v.name,v.price_cents,v.active]));});
+app.patch('/api/admin/addons/:id',auth,role('admin'),async(req,res)=>{uuid.parse(req.params.id);const v=adminSchemas.addons.strict().parse(req.body);await pool.query('UPDATE addons SET name=$2,price_cents=$3,active=$4 WHERE id=$1',[req.params.id,v.name,v.price_cents,v.active]);const addon=await one(pool,'SELECT * FROM addons WHERE id=$1',[req.params.id]);if(!addon)fail('Complemento inexistente.',404);res.json(addon);});
 app.patch('/api/trips/:id/status',auth,role('admin','driver'),async(req,res)=>{
  uuid.parse(req.params.id);const {status}=z.object({status:z.enum(['boarding','en_route','arrived'])}).strict().parse(req.body);
  res.json(await transaction(async c=>{
-  const t=await one(c,'SELECT t.*,d.user_id FROM trips t JOIN drivers d ON d.id=t.driver_id WHERE t.id=$1 FOR UPDATE OF t',[req.params.id]);if(!t)fail('Viaje inexistente.',404);
+  const lookup=await one(c,'SELECT vehicle_id FROM trips WHERE id=$1',[req.params.id]);if(!lookup)fail('Viaje inexistente.',404);
+  await c.query('SELECT id FROM vehicles WHERE id=$1 FOR UPDATE',[lookup.vehicle_id]);
+  await c.query('SELECT id FROM trips WHERE id=$1 FOR UPDATE',[req.params.id]);
+  const t=await one(c,'SELECT t.*,d.user_id FROM trips t JOIN drivers d ON d.id=t.driver_id WHERE t.id=$1',[req.params.id]);
   if(req.user.role!=='admin'&&t.user_id!==req.user.id)fail('No eres el conductor.',403);
   if({scheduled:'boarding',boarding:'en_route',en_route:'arrived'}[t.status]!==status)fail('Transición inválida.',409);
   // A physical unit can expose only one active trip through its QR.
-  await c.query('SELECT id FROM vehicles WHERE id=$1 FOR UPDATE',[t.vehicle_id]);
   if(status==='boarding'&&await one(c,"SELECT id FROM trips WHERE vehicle_id=$1 AND id<>$2 AND status IN ('boarding','en_route')",[t.vehicle_id,t.id]))fail('La unidad tiene otro viaje activo.',409);
-  return one(c,'UPDATE trips SET status=$2 WHERE id=$1 RETURNING *',[t.id,status]);
+  await c.query('UPDATE trips SET status=$2 WHERE id=$1',[t.id,status]);return one(c,'SELECT * FROM trips WHERE id=$1',[t.id]);
  }));
 });
 app.get('/api/operations/trips',auth,role('driver','admin'),async(req,res)=>res.json((await pool.query(`SELECT t.*,r.origin,r.destination FROM trips t JOIN routes r ON r.id=t.route_id JOIN drivers d ON d.id=t.driver_id WHERE ($2 OR d.user_id=$1) AND t.status<>'arrived' ORDER BY departure_at`,[req.user.id,req.user.role==='admin'])).rows));
@@ -186,8 +194,9 @@ app.post('/api/admin/refunds/:id',auth,role('admin'),async(req,res)=>{
 app.use('/api',(req,res)=>res.status(404).json({error:'Endpoint inexistente.'}));
 app.use((error,req,res,next)=>{
  if(error instanceof z.ZodError)return res.status(400).json({error:error.issues.map(x=>x.message).join(' ')});
- if(error.code==='23505')return res.status(409).json({error:'El registro ya existe o el recurso está ocupado.'});
- if(['23503','23514','22P02'].includes(error.code))return res.status(400).json({error:'Datos o relaciones inválidos.'});
+ if(error.code==='ER_DUP_ENTRY')return res.status(409).json({error:'El registro ya existe o el recurso está ocupado.'});
+ if(['ER_NO_REFERENCED_ROW_2','ER_ROW_IS_REFERENCED_2','ER_CHECK_CONSTRAINT_VIOLATED','ER_INCORRECT_TYPE','ER_DATA_TOO_LONG','WARN_DATA_TRUNCATED','ER_TRUNCATED_WRONG_VALUE'].includes(error.code)||error.errno===4025)return res.status(400).json({error:'Datos o relaciones inválidos.'});
+ if(['ER_LOCK_DEADLOCK','ER_LOCK_WAIT_TIMEOUT'].includes(error.code))return res.status(409).json({error:'El recurso está ocupado. Intenta de nuevo con la misma solicitud.'});
  if(error.type==='entity.parse.failed')return res.status(400).json({error:'JSON inválido.'});
  if(!error.status)console.error(error);
  res.status(error.status||500).json({error:error.status?error.message:'Error interno. Intenta de nuevo.'});
