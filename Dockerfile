@@ -5,6 +5,7 @@ COPY server/package.json server/package.json
 COPY web/package.json web/package.json
 RUN npm ci
 COPY web web
+COPY scripts/migrate-on-build.mjs scripts/migrate-on-build.mjs
 RUN npm run build
 
 FROM node:24-bookworm-slim

@@ -27,4 +27,7 @@ jobs:
         env:
           TEST_DATABASE_URL: mysql://conexiones:test-only@127.0.0.1:3306/conexiones_test
       - run: npm run build
+        env:
+          DB_MIGRATE_ON_BUILD: 'true'
+          DATABASE_URL: mysql://conexiones:test-only@127.0.0.1:3306/conexiones_test
       - run: npm audit --omit=dev --audit-level=high

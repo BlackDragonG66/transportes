@@ -6,16 +6,18 @@ Configuración del despliegue:
 
 | Campo | Valor |
 |---|---|
-| Marco | Express (u Other con archivo de entrada) |
+| Marco | Other (para habilitar compilación y archivo de entrada) |
 | Rama | master |
 | Node | 24.x |
 | Raíz | ./ |
 | Salida | . |
 | Archivo de entrada | server/src/index.js |
-| Compilación | npm ci --include=dev && npm run build && npm run db:migrate |
+| Compilación | npm run build |
 | Inicio | npm start |
 
 Variables obligatorias: `DB_HOST`, `DB_PORT` (3306), `DB_USER`, `DB_PASSWORD`, `DB_NAME`, `SESSION_SECRET`, `APP_URL` y `PUBLIC_API_URL`. Usa el servidor, usuario y nombre de base exactos de hPanel. `DATABASE_URL` es una alternativa opcional con protocolo `mysql://`; si existe, tiene prioridad sobre `DB_*`.
+
+En Hostinger añade `DB_MIGRATE_ON_BUILD=true` y `NPM_CONFIG_PRODUCTION=false`: el comando de compilación genera React y aplica el esquema y catálogo de forma idempotente. El preset Express de hPanel omite la compilación, por eso este proyecto usa Other. Las compilaciones locales y Docker no requieren base de datos mientras `DB_MIGRATE_ON_BUILD` no esté activado.
 
 `MP_ENABLED=false` mantiene Mercado Pago pendiente: no se crean reservas web ni preferencias de pago, ni se consultan pagos externos. Para activarlo, completa `MP_ACCESS_TOKEN`, `MP_WEBHOOK_SECRET`, `MP_COLLECTOR_ID` y cambia `MP_ENABLED=true`.
 
