@@ -1,6 +1,7 @@
 import {randomUUID} from 'node:crypto';
 import {readFile} from 'node:fs/promises';
 import {createPool,mysqlOptions,insert,one} from '../src/db.js';
+export const travelers=(passengerTypeId,count)=>Array.from({length:count},(_,i)=>({name:`Viajero Prueba ${i+1}`,passengerTypeId}));
 export async function testDatabase() {
  if(!process.env.TEST_DATABASE_URL)throw new Error('Ejecuta npm test desde la raíz o configura TEST_DATABASE_URL.');
  const options=mysqlOptions({DATABASE_URL:process.env.TEST_DATABASE_URL});

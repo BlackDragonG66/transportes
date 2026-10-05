@@ -1,7 +1,7 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {createHmac} from 'node:crypto';
-import {calculateTotal,splitLocal,bookingInput} from '../src/domain.js';
+import {calculateTotal,splitLocal,bookingInput,rapidInput} from '../src/domain.js';
 import {validSignature} from '../src/mercadopago.js';
 test('web cobra 10 MXN por pasajero y POS cobra cero comisión',()=>{
  const p=[{quantity:2,unit_cents:25000},{quantity:1,unit_cents:15000}],a=[{quantity:2,unit_cents:6500}];
@@ -15,9 +15,12 @@ test('distribuye pasajeros y maletas sin superar cuatro personas por auto',()=>{
  assert.throws(()=>splitLocal(5,0,1));
 });
 test('no acepta precios enviados por cliente ni conceptos duplicados',()=>{
- const id='11111111-1111-4111-8111-111111111111',p={tripId:id,passengers:[{id,quantity:1}]};
+ const id='11111111-1111-4111-8111-111111111111',p={tripId:id,passengers:[{id,quantity:1}],travelers:[{name:'Viajero Prueba',passengerTypeId:id}]};
+ assert(bookingInput.safeParse(p).success);assert(!bookingInput.safeParse({...p,travelers:[]}).success);
  assert(!bookingInput.safeParse({...p,total:1}).success);assert(!bookingInput.safeParse({...p,passengers:[...p.passengers,...p.passengers]}).success);
  assert(!bookingInput.safeParse({...p,rapid:{zone:'Centro',passengers:5,luggage:0,vehicles:1}}).success);
+ assert(!rapidInput.safeParse({zone:'Centro',passengers:5,luggage:0,vehicles:1}).success);
+ assert(rapidInput.safeParse({zone:'Centro',passengers:5,luggage:0,vehicles:2}).success);
 });
 test('firma Mercado Pago valida manifest oficial, rechaza firma alterada o ausente',()=>{
  const ts=String(Date.now()),id='123456',request='request-test',secret='test-secret';

@@ -8,6 +8,7 @@ let text='# ConexionES — código completo\n\n';
 for(const path of (await files(root)).sort()){
  const name=path.slice(root.length+1).replaceAll('\\','/');
  if(name==='package-lock.json')continue;
+ if(['.jpg','.jpeg','.png','.webp'].includes(extname(path))){text+=`## ${name}\n\nRecurso binario incluido en el repositorio y en ConexionES.zip.\n\n`;continue;}
  text+=`## ${name}\n\n\`\`\`\`${langs[extname(path)]||'text'}\n${await readFile(path,'utf8')}\n\`\`\`\`\n\n`;
 }
 await mkdir(resolve(root,'artifacts'),{recursive:true});

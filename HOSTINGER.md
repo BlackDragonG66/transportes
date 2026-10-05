@@ -34,3 +34,9 @@ Credenciales privadas: el `.env` local está excluido de Git y no se publica en 
 El cargador LiteSpeed de Hostinger ejecuta el archivo de entrada con `require()`. `server/src/index.js` inicia la conexión y el servidor dentro de una función asíncrona, sin `await` en el nivel superior, para evitar `ERR_REQUIRE_ASYNC_MODULE`. Las pruebas verifican este modo de arranque con una petición real a `/api/health`.
 
 Referencia de conexión: [Hostinger y MySQL para Node.js](https://www.hostinger.com/support/connecting-a-hostinger-mysql-database-to-a-node-js-application/).
+
+El flujo de compra es viaje → pasajeros con nombre y tarifa → extras → pago. Los lugares se apartan únicamente al iniciar el pago. Viaje Rápido se solicita desde un boleto confirmado, después de verificar el pago en el servidor. Las reservas anteriores sin nombres siguen siendo consultables.
+
+En Administración → Página y publicidad puedes cambiar portada, logo, teléfonos, oficinas, preguntas frecuentes y anuncios. Los anuncios admiten ubicación, orden, visibilidad y fechas de publicación. La biblioteca convierte JPG/PNG/WebP a WebP y guarda los archivos en `media_assets` (MySQL), por lo que sobreviven a los despliegues.
+
+Administración → Equipo y accesos crea cuentas de taquilla, conductor o administrador. Mi cuenta permite cambiar la contraseña con la contraseña actual. Para un alta inicial sin terminal, la migración acepta `BOOTSTRAP_ADMIN_EMAIL` y `BOOTSTRAP_ADMIN_PASSWORD_HASH` (bcrypt, costo 12); crea la cuenta si no existe y conserva su contraseña en futuras ejecuciones. Retira ambas variables después de crearla. La contraseña y el hash no deben incluirse en Git.

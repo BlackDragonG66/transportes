@@ -1,5 +1,5 @@
 -- MySQL 8.0.16+ / MariaDB 10.6+, InnoDB, UTC. No root grants or CREATE DATABASE required.
-CREATE TABLE IF NOT EXISTS schema_migrations (version INT PRIMARY KEY, applied_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3)) ENGINE=InnoDB;
+CREATE TABLE IF NOT EXISTS schema_migrations (version INT PRIMARY KEY, applied_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 CREATE TABLE IF NOT EXISTS users (
  id CHAR(36) PRIMARY KEY DEFAULT (UUID()), name VARCHAR(120) NOT NULL, email VARCHAR(254) NOT NULL UNIQUE,
  phone VARCHAR(25) NOT NULL, password_hash VARCHAR(100) NOT NULL, role ENUM('customer','cashier','driver','admin') NOT NULL DEFAULT 'customer',
@@ -104,3 +104,52 @@ CREATE TABLE IF NOT EXISTS audit_log (
  metadata JSON, created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3), FOREIGN KEY(actor_id) REFERENCES users(id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 INSERT INTO schema_migrations(version) VALUES(1) ON DUPLICATE KEY UPDATE version=version;
+CREATE TABLE IF NOT EXISTS booking_travelers (
+ booking_id CHAR(36) NOT NULL,
+ position TINYINT UNSIGNED NOT NULL,
+ full_name VARCHAR(120) NOT NULL,
+ passenger_type_id CHAR(36) NOT NULL,
+ PRIMARY KEY(booking_id,position),
+ FOREIGN KEY(booking_id) REFERENCES bookings(id),
+ FOREIGN KEY(passenger_type_id) REFERENCES passenger_types(id),
+ CHECK(position BETWEEN 1 AND 60)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS site_settings (
+ id VARCHAR(20) PRIMARY KEY,
+ settings JSON NOT NULL,
+ updated_by CHAR(36) NULL,
+ updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+ FOREIGN KEY(updated_by) REFERENCES users(id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS site_promotions (
+ id CHAR(36) PRIMARY KEY,
+ title VARCHAR(120) NOT NULL,
+ subtitle VARCHAR(300) NOT NULL DEFAULT '',
+ image_url VARCHAR(600) NOT NULL,
+ button_label VARCHAR(60) NOT NULL DEFAULT 'Ver promoción',
+ href VARCHAR(600) NOT NULL DEFAULT '#reservar',
+ placement ENUM('banner','promotion') NOT NULL DEFAULT 'promotion',
+ sort_order INT NOT NULL DEFAULT 0,
+ active BOOLEAN NOT NULL DEFAULT TRUE,
+ starts_at DATETIME(3) NULL,
+ ends_at DATETIME(3) NULL,
+ updated_by CHAR(36) NULL,
+ FOREIGN KEY(updated_by) REFERENCES users(id),
+ CHECK(ends_at IS NULL OR starts_at IS NULL OR ends_at>starts_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS media_assets (
+ id CHAR(36) PRIMARY KEY,
+ filename VARCHAR(120) NOT NULL,
+ sha256 CHAR(64) NOT NULL UNIQUE,
+ width INT NOT NULL,
+ height INT NOT NULL,
+ byte_size INT NOT NULL,
+ data MEDIUMBLOB NOT NULL,
+ created_by CHAR(36) NOT NULL,
+ created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+ FOREIGN KEY(created_by) REFERENCES users(id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+INSERT INTO schema_migrations(version) VALUES(2) ON DUPLICATE KEY UPDATE version=version;

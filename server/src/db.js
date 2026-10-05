@@ -13,7 +13,7 @@ function adapter(connection) {
   // MySQL does not support transaction-control commands in the prepared protocol.
   const [result]=values.length?await connection.execute(statement,values):await connection.query(statement);
   const rows=Array.isArray(result)?result:[];
-  for(const row of rows)for(const key of ['metadata','subscription'])if(typeof row[key]==='string')row[key]=JSON.parse(row[key]);
+  for(const row of rows)for(const key of ['metadata','subscription','settings'])if(typeof row[key]==='string')row[key]=JSON.parse(row[key]);
   return {rows,affectedRows:result.affectedRows??0};
  },release:()=>connection.release()};
 }

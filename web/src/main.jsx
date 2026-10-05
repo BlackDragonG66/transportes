@@ -1,32 +1,330 @@
-import React,{useEffect,useState} from 'react';
-import {createRoot} from 'react-dom/client';
-import 'bulma/css/bulma.min.css';
-import './style.css';
-import {api,date,money,enablePush,disablePush} from './api.js';
-import ReservationForm from './ReservationForm.jsx';
-import BoardingView from './BoardingView.jsx';
-import POS from './POS.jsx';
-import Operations from './Operations.jsx';
-import Admin from './Admin.jsx';
-function Auth({onUser}){
- const [register,setRegister]=useState(false),[values,setValues]=useState({}),[error,setError]=useState(''),[busy,setBusy]=useState(false);
- const [notice,setNotice]=useState('');
- async function submit(e){e.preventDefault();setBusy(true);try{onUser(await api(`/auth/${register?'register':'login'}`,{method:'POST',body:values}));}catch(e){setError(e.message);}finally{setBusy(false);}}
- return <form className="box auth-box" onSubmit={submit}><h2 className="title is-4">{register?'Crea tu cuenta':'Bienvenido de nuevo'}</h2>{(register?['name','phone','email','password']:['email','password']).map(key=><label className="field is-block" key={key}>{({name:'Nombre',phone:'Teléfono',email:'Correo',password:'Contraseña (mínimo 12 caracteres)'})[key]}<input className="input mt-1" required type={key==='password'?'password':key==='email'?'email':key==='phone'?'tel':'text'} minLength={key==='password'?12:undefined} maxLength={key==='password'?72:120} autoComplete={key==='password'?(register?'new-password':'current-password'):key==='name'?'name':key==='phone'?'tel':'email'} value={values[key]||''} onChange={e=>setValues({...values,[key]:e.target.value})}/></label>)}{error&&<p role="alert" className="notification is-danger is-light">{error}</p>}{notice&&<p role="status" className="notification">{notice}</p>}<button disabled={busy} className={`button is-primary is-fullwidth ${busy?'is-loading':''}`}>{register?'Registrarme':'Entrar'}</button><button className="button is-text mt-3" type="button" onClick={()=>{setRegister(!register);setValues({});setError('');}}>{register?'Ya tengo cuenta':'Crear una cuenta'}</button>{!register&&<button type="button" className="button is-text" onClick={async()=>{try{setNotice((await api('/auth/recover',{method:'POST',body:{email:values.email}})).message);}catch(e){setError(e.message);}}}>Recuperar acceso</button>}</form>;
+import React, { useEffect, useState } from "react";
+import { createRoot } from "react-dom/client";
+import "bulma/css/bulma.min.css";
+import "./style.css";
+import { api, date, money, enablePush, disablePush } from "./api.js";
+import ReservationForm from "./ReservationForm.jsx";
+import BoardingView from "./BoardingView.jsx";
+import POS from "./POS.jsx";
+import Operations from "./Operations.jsx";
+import Admin from "./Admin.jsx";
+import Account from "./Account.jsx";
+import { Auth, Activate } from "./Auth.jsx";
+import { HomeHero, HomeContent, SiteFooter } from "./HomeContent.jsx";
+import useModalFocus from "./useModalFocus.js";
+function MyBookings() {
+  const [rows, setRows] = useState([]),
+    [error, setError] = useState("");
+  useEffect(() => {
+    api("/bookings")
+      .then(setRows)
+      .catch((e) => setError(e.message));
+  }, []);
+  const status = {
+    pending: "Pago pendiente",
+    confirmed: "Confirmado",
+    expired: "Vencido",
+    cancelled: "Cancelado",
+    refunded: "Reembolsado",
+    refund_required: "Reembolso pendiente",
+  };
+  return (
+    <div className="box">
+      <p className="eyebrow">TODAS TUS CONEXIONES</p>
+      <h1 className="title">Mis reservas</h1>
+      {error && <p>{error}</p>}
+      {rows.map((b) => (
+        <article className="booking-list-card" key={b.id}>
+          <div>
+            <h2>
+              {b.origin} → {b.destination}
+            </h2>
+            <p>
+              {date(b.departure_at)} · {b.passengers} pasajeros
+            </p>
+            <span className="tag is-light">{status[b.status]}</span>
+          </div>
+          <div>
+            <strong>{money(b.total_cents)}</strong>
+            <div className="buttons mt-3">
+              <a
+                className="button is-primary is-small"
+                href={`/ticket/${b.ticket_token}`}
+              >
+                Ver boleto
+              </a>
+              {b.status === "confirmed" && (
+                <a
+                  className="button is-light is-small"
+                  href={`/ticket/${b.ticket_token}#taxi`}
+                >
+                  Mi auto al llegar
+                </a>
+              )}
+            </div>
+          </div>
+        </article>
+      ))}
+      {!rows.length && !error && (
+        <p>Aún no tienes reservas. Tu próxima conexión te espera.</p>
+      )}
+    </div>
+  );
 }
-function Activate({token,onUser}){const [password,setPassword]=useState(''),[error,setError]=useState(''),[busy,setBusy]=useState(false);return <form className="box auth-box" onSubmit={async e=>{e.preventDefault();setBusy(true);try{onUser(await api('/auth/activate',{method:'POST',body:{token,password}}));history.replaceState(null,'','/');}catch(e){setError(e.message);}finally{setBusy(false);}}}><h1 className="title is-4">Establece tu contraseña</h1><label className="label">Mínimo 12 caracteres</label><input className="input" type="password" autoComplete="new-password" minLength="12" maxLength="72" required value={password} onChange={e=>setPassword(e.target.value)}/>{error&&<p className="notification is-danger is-light mt-3">{error}</p>}<button disabled={busy} className="button is-primary mt-4">Guardar y entrar</button></form>;}
-function MyBookings(){const [rows,setRows]=useState([]),[error,setError]=useState('');useEffect(()=>{api('/bookings').then(setRows).catch(e=>setError(e.message));},[]);return <div className="box"><h1 className="title">Mis reservas</h1>{error&&<p>{error}</p>}{rows.map(b=><a className="fare-row" href={`/ticket/${b.ticket_token}`} key={b.id}><span>{date(b.created_at)}<small>{b.passengers} pasajeros · {b.status}</small></span><strong>{money(b.total_cents)}</strong></a>)}{!rows.length&&!error&&<p>Aún no tienes reservas.</p>}</div>;}
-function App(){
- const [user,setUser]=useState(null),[loaded,setLoaded]=useState(false),[tab,setTab]=useState('reserve'),[message,setMessage]=useState('');
- useEffect(()=>{api('/auth/me').then(setUser).catch(()=>{}).finally(()=>setLoaded(true));if('serviceWorker'in navigator)navigator.serviceWorker.register('/sw.js').catch(()=>{});},[]);
- const match=location.pathname.match(/^\/(ticket|vehicle|tracking)\/([a-f0-9-]+)$/i);
- const activation=location.pathname.match(/^\/activate\/([a-f0-9]{64})$/);
- const requiresAuth=match?.[1]==='ticket';
- return <><header className="site-header"><a className="brand" href="/">Conexion<span>ES</span><small>APATZINGÁN ↔ MORELIA</small></a><div className="header-actions">{user?<><span>{user.name}</span><button className="button is-small" onClick={async()=>{try{await disablePush();await api('/auth/logout',{method:'POST'});setUser(null);setTab('reserve');}catch(e){setMessage(e.message);}}}>Salir</button></>:<button className="button is-small" onClick={()=>setTab('login')}>Ingresar</button>}</div></header>
- {!match&&tab==='reserve'&&<section className="hero-banner"><div><p className="eyebrow">CERCA DE LO QUE IMPORTA</p><h1>Un camino.<br/>Muchas conexiones.</h1><p>De Apatzingán a Morelia y de regreso.<br/>Tu familia, tu salud y tu siguiente viaje, más cerca.</p><div className="hero-tags"><span>Rutas interurbanas</span><span>Aeropuerto</span><span>CREE / Teletón</span></div></div><div className="route-art" aria-hidden="true"><div className="route-line"></div><span className="route-stop first">Apatzingán</span><span className="route-stop last">Morelia</span><div className="van">C<span>→</span></div></div></section>}
- <main className="page-container">{user&&!match&&<nav className="tabs"><ul>{[['reserve','Reservar'],['bookings','Mis reservas'],...(['admin','cashier'].includes(user.role)?[['pos','Taquilla']]:[]),...(['admin','driver'].includes(user.role)?[['operations','Operación']]:[]),...(user.role==='admin'?[['admin','Administración']]:[])].map(([id,label])=><li key={id} className={tab===id?'is-active':''}><a onClick={()=>setTab(id)}>{label}</a></li>)}</ul><button className="button is-small" onClick={async()=>{try{await enablePush();setMessage('Notificaciones activadas.');}catch(e){setMessage(e.message);}}}>Activar avisos</button></nav>}
- {message&&<p className="notification" role="status">{message}<button aria-label="Cerrar aviso" className="delete" onClick={()=>setMessage('')}/></p>}
- {!loaded?<p>Cargando…</p>:activation?<Activate token={activation[1]} onUser={u=>{history.replaceState(null,'','/');setUser(u);}}/>:match?(requiresAuth&&!user?<Auth onUser={setUser}/>:<BoardingView mode={match[1]} token={match[2]} user={user}/>):tab==='login'&&!user?<Auth onUser={u=>{setUser(u);setTab('reserve');}}/>:tab==='pos'&&user?<POS user={user}/>:tab==='operations'&&user?<Operations/>:tab==='admin'&&user?<Admin/>:tab==='bookings'&&user?<MyBookings/>:<><div className="section-heading"><h2>Tu próximo destino</h2><span>Lugares, sin complicaciones</span></div><ReservationForm user={user}/>{!user&&<Auth onUser={setUser}/>}</>}
- </main><footer>ConexionES · Viajes que acercan <span>Apátzingán / Morelia / Aeropuerto / Rutas médicas</span></footer></>;
+function App() {
+  const [user, setUser] = useState(null),
+    [loaded, setLoaded] = useState(false),
+    [tab, setTab] = useState(
+      ["admin", "bookings", "pos", "operations", "account"].includes(
+        location.hash.slice(1),
+      )
+        ? location.hash.slice(1)
+        : "reserve",
+    ),
+    [message, setMessage] = useState(""),
+    [site, setSite] = useState(null),
+    [siteError, setSiteError] = useState(""),
+    [stage, setStage] = useState(0),
+    [login, setLogin] = useState(false),
+    [menu, setMenu] = useState(false);
+  const loadSite = () =>
+    api("/site")
+      .then(setSite)
+      .catch((e) => setSiteError(e.message));
+  useModalFocus(login, () => setLogin(false));
+  useEffect(() => {
+    api("/auth/me")
+      .then(setUser)
+      .catch(() => {})
+      .finally(() => setLoaded(true));
+    loadSite();
+    if ("serviceWorker" in navigator)
+      navigator.serviceWorker.register("/sw.js").catch(() => {});
+  }, []);
+  useEffect(() => {
+    if (!login) return;
+    const close = (e) => {
+      if (e.key === "Escape") setLogin(false);
+    };
+    document.addEventListener("keydown", close);
+    return () => document.removeEventListener("keydown", close);
+  }, [login]);
+  const match = location.pathname.match(
+      /^\/(ticket|vehicle|tracking)\/([a-f0-9-]+)$/i,
+    ),
+    activation = location.pathname.match(/^\/activate\/([a-f0-9]{64})$/),
+    requiresAuth = match?.[1] === "ticket";
+  const settings = site?.settings,
+    home = !match && !activation && tab === "reserve";
+  function go(value) {
+    setTab(value);
+    setMenu(false);
+    history.replaceState(null, "", value === "reserve" ? "/" : `/#${value}`);
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }
+  async function logout() {
+    try {
+      await disablePush();
+      await api("/auth/logout", { method: "POST" });
+      sessionStorage.removeItem("conexiones-draft");
+      setUser(null);
+      go("reserve");
+    } catch (e) {
+      setMessage(e.message);
+    }
+  }
+  return (
+    <>
+      {settings && (
+        <div className="announcement-bar">
+          <span>{settings.announcement}</span>
+          <a href={`tel:${settings.phones[0]}`}>
+            Atención a viajeros · {settings.phones[0]}
+          </a>
+        </div>
+      )}
+      <header className="site-header">
+        <div className="header-inner">
+          <a className="brand" href="/">
+            {settings && (
+              <img
+                className="brand-logo"
+                src={settings.logoUrl}
+                alt="Logo de ConexionES"
+              />
+            )}
+            <span>
+              Conexion<b>ES</b>
+              <small>VIAJES QUE NOS ACERCAN</small>
+            </span>
+          </a>
+          <nav
+            className={`main-nav ${menu ? "open" : ""}`}
+            aria-label="Navegación principal"
+          >
+            <a
+              href="/#reservar"
+              onClick={() => {
+                if (!match) go("reserve");
+              }}
+            >
+              Comprar boleto
+            </a>
+            <a href="/#promociones">Promociones</a>
+            <a href="/#servicios">Nuestros servicios</a>
+            <a href="/#contacto">Contacto</a>
+          </nav>
+          <div className="header-actions">
+            {user ? (
+              <>
+                <button
+                  className="button is-light is-small"
+                  onClick={() => go("bookings")}
+                >
+                  Mis viajes
+                </button>
+                <button className="button is-text is-small" onClick={logout}>
+                  Salir
+                </button>
+              </>
+            ) : (
+              <button
+                className="button is-primary is-small"
+                onClick={() => setLogin(true)}
+              >
+                Ingresar
+              </button>
+            )}
+            <button
+              className="mobile-menu"
+              aria-label="Abrir menú"
+              aria-expanded={menu}
+              onClick={() => setMenu(!menu)}
+            >
+              ☰
+            </button>
+          </div>
+        </div>
+      </header>
+      {home && stage === 0 && settings && <HomeHero settings={settings} />}
+      <main
+        className={`page-container ${home && stage === 0 ? "home-container" : ""}`}
+      >
+        {user && !match && (
+          <nav className="workspace-tabs" aria-label="Panel personal">
+            {[
+              ["reserve", "Reservar"],
+              ["bookings", "Mis reservas"],
+              ...(["admin", "cashier"].includes(user.role)
+                ? [["pos", "Taquilla"]]
+                : []),
+              ...(["admin", "driver"].includes(user.role)
+                ? [["operations", "Operación"]]
+                : []),
+              ...(user.role === "admin" ? [["admin", "Administración"]] : []),
+              ["account", "Mi cuenta"],
+            ].map(([id, label]) => (
+              <button
+                key={id}
+                className={tab === id ? "active" : ""}
+                onClick={() => go(id)}
+              >
+                {label}
+              </button>
+            ))}
+            <button
+              className="push-button"
+              onClick={async () => {
+                try {
+                  await enablePush();
+                  setMessage("Notificaciones activadas.");
+                } catch (e) {
+                  setMessage(e.message);
+                }
+              }}
+            >
+              Activar avisos
+            </button>
+          </nav>
+        )}
+        {message && (
+          <p className="notification" role="status">
+            {message}
+            <button
+              aria-label="Cerrar aviso"
+              className="delete"
+              onClick={() => setMessage("")}
+            />
+          </p>
+        )}
+        {!loaded ? (
+          <p>Cargando…</p>
+        ) : activation ? (
+          <Activate
+            token={activation[1]}
+            onUser={(u) => {
+              history.replaceState(null, "", "/");
+              setUser(u);
+            }}
+          />
+        ) : match ? (
+          requiresAuth && !user ? (
+            <Auth onUser={setUser} />
+          ) : (
+            <BoardingView mode={match[1]} token={match[2]} user={user} />
+          )
+        ) : !user && tab !== "reserve" ? (
+          <Auth onUser={setUser} />
+        ) : tab === "pos" && ["admin", "cashier"].includes(user?.role) ? (
+          <POS user={user} />
+        ) : tab === "operations" && ["admin", "driver"].includes(user?.role) ? (
+          <Operations />
+        ) : tab === "admin" && user?.role === "admin" ? (
+          <Admin onChanged={loadSite} />
+        ) : tab === "account" && user ? (
+          <Account user={user} />
+        ) : tab === "bookings" && user ? (
+          <MyBookings />
+        ) : (
+          <>
+            <ReservationForm
+              user={user}
+              onLogin={() => setLogin(true)}
+              onStageChange={setStage}
+            />
+            {site && stage === 0 && <HomeContent site={site} />}
+          </>
+        )}
+        {siteError && !site && (
+          <p className="notification is-warning">{siteError}</p>
+        )}
+      </main>
+      {settings && <SiteFooter settings={settings} />}
+      {login && (
+        <div
+          className="modal is-active"
+          role="dialog"
+          aria-modal="true"
+          aria-label="Acceso a ConexionES"
+        >
+          <div className="modal-background" onClick={() => setLogin(false)} />
+          <div className="modal-content">
+            <Auth
+              onUser={(u) => {
+                setUser(u);
+                setLogin(false);
+              }}
+            />
+          </div>
+          <button
+            autoFocus
+            className="modal-close is-large"
+            aria-label="Cerrar acceso"
+            onClick={() => setLogin(false)}
+          />
+        </div>
+      )}
+    </>
+  );
 }
-createRoot(document.getElementById('root')).render(<App/>);
+createRoot(document.getElementById("root")).render(<App />);
