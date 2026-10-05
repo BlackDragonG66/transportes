@@ -7,12 +7,14 @@ import { pool } from './db.js';
 import { expireBookings } from './bookings.js';
 import { dispatchNotifications } from './notifications.js';
 import { mpRequest,reconcilePayment } from './mercadopago.js';
+// Hostinger's LiteSpeed loader uses require(): keep this module free of top-level await.
+async function start() {
 if(!config.database||!config.secret||config.secret.length<32)throw new Error('Configura DB_HOST, DB_USER, DB_PASSWORD, DB_NAME y SESSION_SECRET (32 caracteres o más).');
 if(config.production&&(!config.appUrl.startsWith('https://')||!config.apiUrl.startsWith('https://')))throw new Error('Producción requiere HTTPS.');
 const dist=fileURLToPath(new URL('../../web/dist',import.meta.url));
 if(existsSync(dist)) {app.use(express.static(dist));app.get('/{*path}',(req,res)=>res.sendFile(`${dist}/index.html`));}
 await pool.query('SELECT 1');
-const server=app.listen(config.port,()=>console.log(`ConexionES escucha en ${config.port}`));
+const server=app.listen(config.port,()=>console.log(`ConexionES escucha en ${server.address()?.port??config.port}`));
 let busy=false,ticks=0,reconcileCursor=null;
 const timer=setInterval(async()=>{
  if(busy)return;busy=true;
@@ -28,3 +30,8 @@ const timer=setInterval(async()=>{
 },10000);
 async function shutdown(){clearInterval(timer);server.close(async()=>{await pool.end();process.exit(0);});}
 process.on('SIGTERM',shutdown);process.on('SIGINT',shutdown);
+}
+start().catch(async error=>{
+ console.error('No se pudo iniciar ConexionES:',error.code||'',error.message);
+ await pool.end();process.exit(1);
+});

@@ -29,4 +29,6 @@ Pruebas: `npm test` crea un MySQL temporal. Con `TEST_DATABASE_URL=mysql://.../c
 
 Credenciales privadas: el `.env` local está excluido de Git y no se publica en GitHub. Importa su contenido en las variables de entorno de Hostinger y sustituye los datos de conexión pendientes.
 
+El cargador LiteSpeed de Hostinger ejecuta el archivo de entrada con `require()`. `server/src/index.js` inicia la conexión y el servidor dentro de una función asíncrona, sin `await` en el nivel superior, para evitar `ERR_REQUIRE_ASYNC_MODULE`. Las pruebas verifican este modo de arranque con una petición real a `/api/health`.
+
 Referencia de conexión: [Hostinger y MySQL para Node.js](https://www.hostinger.com/support/connecting-a-hostinger-mysql-database-to-a-node-js-application/).
