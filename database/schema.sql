@@ -37,8 +37,8 @@ CREATE TABLE IF NOT EXISTS cash_registers (id CHAR(36) PRIMARY KEY DEFAULT (UUID
 CREATE TABLE IF NOT EXISTS cash_sessions (
  id CHAR(36) PRIMARY KEY DEFAULT (UUID()), register_id CHAR(36) NOT NULL, cashier_id CHAR(36) NOT NULL, opening_cents INT NOT NULL CHECK(opening_cents>=0),
  opened_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3), closed_at DATETIME(3), counted_cents INT CHECK(counted_cents>=0), expected_cents INT, difference_cents INT,
- open_register CHAR(36) GENERATED ALWAYS AS (CASE WHEN closed_at IS NULL THEN register_id ELSE NULL END) STORED,
- open_cashier CHAR(36) GENERATED ALWAYS AS (CASE WHEN closed_at IS NULL THEN cashier_id ELSE NULL END) STORED,
+ open_register VARCHAR(36) GENERATED ALWAYS AS (CASE WHEN closed_at IS NULL THEN RTRIM(register_id) ELSE NULL END) STORED,
+ open_cashier VARCHAR(36) GENERATED ALWAYS AS (CASE WHEN closed_at IS NULL THEN RTRIM(cashier_id) ELSE NULL END) STORED,
  UNIQUE(open_register), UNIQUE(open_cashier), FOREIGN KEY(register_id) REFERENCES cash_registers(id), FOREIGN KEY(cashier_id) REFERENCES users(id),
  CHECK((closed_at IS NULL AND counted_cents IS NULL AND expected_cents IS NULL AND difference_cents IS NULL) OR
  (closed_at IS NOT NULL AND counted_cents IS NOT NULL AND expected_cents IS NOT NULL AND difference_cents=counted_cents-expected_cents))
@@ -70,7 +70,7 @@ CREATE TABLE IF NOT EXISTS booking_addons (
 CREATE TABLE IF NOT EXISTS payments (
  id CHAR(36) PRIMARY KEY DEFAULT (UUID()), booking_id CHAR(36) NOT NULL, provider ENUM('cash','mercadopago') NOT NULL, provider_id VARCHAR(120) UNIQUE,
  status ENUM('approved','refunded','charged_back') NOT NULL, amount_cents INT NOT NULL CHECK(amount_cents>0), created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
- approved_booking CHAR(36) GENERATED ALWAYS AS (CASE WHEN status='approved' THEN booking_id ELSE NULL END) STORED,
+ approved_booking VARCHAR(36) GENERATED ALWAYS AS (CASE WHEN status='approved' THEN RTRIM(booking_id) ELSE NULL END) STORED,
  UNIQUE(approved_booking), FOREIGN KEY(booking_id) REFERENCES bookings(id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 CREATE TABLE IF NOT EXISTS payment_preferences (
@@ -87,7 +87,7 @@ CREATE TABLE IF NOT EXISTS last_mile_requests (
 CREATE TABLE IF NOT EXISTS local_jobs (
  id CHAR(36) PRIMARY KEY DEFAULT (UUID()), request_id CHAR(36) NOT NULL, passengers INT NOT NULL CHECK(passengers BETWEEN 1 AND 4), luggage INT NOT NULL CHECK(luggage>=0),
  fleet_id CHAR(36), status ENUM('waiting','accepted','completed','cancelled') NOT NULL DEFAULT 'waiting', accepted_at DATETIME(3),
- active_fleet CHAR(36) GENERATED ALWAYS AS (CASE WHEN status='accepted' THEN fleet_id ELSE NULL END) STORED,
+ active_fleet VARCHAR(36) GENERATED ALWAYS AS (CASE WHEN status='accepted' THEN RTRIM(fleet_id) ELSE NULL END) STORED,
  UNIQUE(active_fleet), CHECK(status IN ('waiting','cancelled') OR fleet_id IS NOT NULL), FOREIGN KEY(request_id) REFERENCES last_mile_requests(id), FOREIGN KEY(fleet_id) REFERENCES local_fleet(id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 CREATE TABLE IF NOT EXISTS push_subscriptions (
