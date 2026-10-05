@@ -66,6 +66,11 @@ export default function BoardingView({ mode, token, user }) {
   }
   return (
     <div className="boarding-wrap">
+      {data.isDemo && (
+        <p className="notification is-warning is-light">
+          BOLETO DE DEMOSTRACIÓN · Pago simulado, sin cargo real.
+        </p>
+      )}
       <div className="box">
         <p className="eyebrow">CONEXIONES · VIAJA CON CONFIANZA</p>
         <h1 className="title is-3">

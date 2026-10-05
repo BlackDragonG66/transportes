@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { bookingInput, calculateTotal, uuid } from "./domain.js";
 import { transaction, one, fail, pool, insert } from "./db.js";
 import { config, integrationStatus } from "./config.js";
+import { demoScope, isDemo } from "./demo.js";
 export async function notify(c, userId, title, body, url, key) {
   await c.query(
     "INSERT INTO notification_outbox(user_id,title,body,url,event_key) VALUES($1,$2,$3,$4,$5) ON DUPLICATE KEY UPDATE event_key=event_key",
@@ -12,7 +13,7 @@ export async function ticketNotification(c, b) {
   await notify(
     c,
     b.user_id,
-    "Tu boleto ConexionES",
+    `${(await isDemo(c, "trip", b.trip_id)) ? "DEMO · " : ""}Tu boleto ConexionES`,
     `Reserva ${b.id} confirmada. ${b.passengers} pasajero(s). Total $${(b.total_cents / 100).toFixed(2)} MXN.`,
     `${config.appUrl}/ticket/${b.ticket_token}`,
     `ticket:${b.id}`,
@@ -23,11 +24,6 @@ export async function createBooking(actor, raw, key, db = pool) {
   uuid.parse(key);
   if (input.channel === "pos" && !["cashier", "admin"].includes(actor.role))
     fail("Acceso a taquilla requerido.", 403);
-  if (input.channel === "web" && !integrationStatus().payments)
-    fail(
-      "Los pagos online están pendientes de configuración. Puedes reservar en taquilla.",
-      503,
-    );
   const hash = createHash("sha256").update(JSON.stringify(input)).digest("hex");
   return transaction(async (c) => {
     // Same key serializes before capacity, including requests on different trips.
@@ -69,6 +65,12 @@ export async function createBooking(actor, raw, key, db = pool) {
       [trip.id],
     );
     const userId = input.channel === "pos" ? input.customerId : actor.id;
+    const demo = await demoScope(c, actor, trip, userId, cash);
+    if (input.channel === "web" && !demo && !integrationStatus().payments)
+      fail(
+        "Los pagos online están pendientes de configuración. Puedes reservar en taquilla.",
+        503,
+      );
     if (!(await one(c, "SELECT id FROM users WHERE id=$1", [userId])))
       fail("Cliente inexistente.", 404);
     const passengers = [];
@@ -140,17 +142,23 @@ export async function createBooking(actor, raw, key, db = pool) {
         [b.id, position + 1, t.name, t.passengerTypeId],
       );
     if (input.channel === "pos") {
-      await c.query(
-        "INSERT INTO payments(booking_id,provider,status,amount_cents) VALUES($1,'cash','approved',$2)",
-        [b.id, b.total_cents],
-      );
+      if (demo)
+        await c.query(
+          "INSERT INTO demo_payments(booking_id,amount_cents,method) VALUES($1,$2,'pos')",
+          [b.id, b.total_cents],
+        );
+      else
+        await c.query(
+          "INSERT INTO payments(booking_id,provider,status,amount_cents) VALUES($1,'cash','approved',$2)",
+          [b.id, b.total_cents],
+        );
       await ticketNotification(c, b);
     }
     await c.query(
       "INSERT INTO audit_log(actor_id,action,entity_id) VALUES($1,'booking.created',$2)",
       [actor.id, b.id],
     );
-    return b;
+    return { ...b, isDemo: demo };
   }, db);
 }
 export async function expireBookings(db = pool) {

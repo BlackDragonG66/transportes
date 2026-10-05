@@ -2,6 +2,7 @@ import React, { useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
 import "bulma/css/bulma.min.css";
 import "./style.css";
+import "./demo.css";
 import { api, date, money, enablePush, disablePush } from "./api.js";
 import ReservationForm from "./ReservationForm.jsx";
 import BoardingView from "./BoardingView.jsx";
@@ -12,6 +13,8 @@ import Account from "./Account.jsx";
 import { Auth, Activate } from "./Auth.jsx";
 import { HomeHero, HomeContent, SiteFooter } from "./HomeContent.jsx";
 import useModalFocus from "./useModalFocus.js";
+import Parcels, { ParcelTracking } from "./Parcels.jsx";
+import { DemoGuide, Notices } from "./Demo.jsx";
 function MyBookings() {
   const [rows, setRows] = useState([]),
     [error, setError] = useState("");
@@ -72,12 +75,19 @@ function MyBookings() {
   );
 }
 function App() {
+  const [demo, setDemo] = useState(null);
   const [user, setUser] = useState(null),
     [loaded, setLoaded] = useState(false),
     [tab, setTab] = useState(
-      ["admin", "bookings", "pos", "operations", "account"].includes(
-        location.hash.slice(1),
-      )
+      [
+        "admin",
+        "bookings",
+        "pos",
+        "operations",
+        "account",
+        "parcels",
+        "notices",
+      ].includes(location.hash.slice(1))
         ? location.hash.slice(1)
         : "reserve",
     ),
@@ -98,8 +108,30 @@ function App() {
       .catch(() => {})
       .finally(() => setLoaded(true));
     loadSite();
+    api("/demo/status")
+      .then(setDemo)
+      .catch(() => {});
     if ("serviceWorker" in navigator)
       navigator.serviceWorker.register("/sw.js").catch(() => {});
+  }, []);
+  useEffect(() => {
+    const update = () => {
+      const value = location.hash.slice(1);
+      if (
+        [
+          "admin",
+          "bookings",
+          "pos",
+          "operations",
+          "account",
+          "parcels",
+          "notices",
+        ].includes(value)
+      )
+        setTab(value);
+    };
+    window.addEventListener("hashchange", update);
+    return () => window.removeEventListener("hashchange", update);
   }, []);
   useEffect(() => {
     if (!login) return;
@@ -110,7 +142,7 @@ function App() {
     return () => document.removeEventListener("keydown", close);
   }, [login]);
   const match = location.pathname.match(
-      /^\/(ticket|vehicle|tracking)\/([a-f0-9-]+)$/i,
+      /^\/(ticket|vehicle|tracking|parcel-tracking)\/([a-f0-9-]+)$/i,
     ),
     activation = location.pathname.match(/^\/activate\/([a-f0-9]{64})$/),
     requiresAuth = match?.[1] === "ticket";
@@ -171,6 +203,17 @@ function App() {
               Comprar boleto
             </a>
             <a href="/#promociones">Promociones</a>
+            <a
+              href="/#parcels"
+              onClick={(e) => {
+                if (!match) {
+                  e.preventDefault();
+                  go("parcels");
+                }
+              }}
+            >
+              Paquetería
+            </a>
             <a href="/#servicios">Nuestros servicios</a>
             <a href="/#contacto">Contacto</a>
           </nav>
@@ -206,6 +249,14 @@ function App() {
           </div>
         </div>
       </header>
+      {demo?.enabled && (
+        <div className="demo-banner">
+          <strong>DEMONSTRACIÓN</strong>
+          <span>
+            Salidas y cobros de ejemplo · Ningún pago DEMO realiza un cargo
+          </span>
+        </div>
+      )}
       {home && stage === 0 && settings && <HomeHero settings={settings} />}
       <main
         className={`page-container ${home && stage === 0 ? "home-container" : ""}`}
@@ -215,6 +266,8 @@ function App() {
             {[
               ["reserve", "Reservar"],
               ["bookings", "Mis reservas"],
+              ["parcels", "Paquetería"],
+              ["notices", "Mis avisos"],
               ...(["admin", "cashier"].includes(user.role)
                 ? [["pos", "Taquilla"]]
                 : []),
@@ -247,6 +300,7 @@ function App() {
             </button>
           </nav>
         )}
+        {!match && <DemoGuide user={user} />}
         {message && (
           <p className="notification" role="status">
             {message}
@@ -267,6 +321,8 @@ function App() {
               setUser(u);
             }}
           />
+        ) : match?.[1] === "parcel-tracking" ? (
+          <ParcelTracking token={match[2]} />
         ) : match ? (
           requiresAuth && !user ? (
             <Auth onUser={setUser} />
@@ -285,6 +341,10 @@ function App() {
           <Account user={user} />
         ) : tab === "bookings" && user ? (
           <MyBookings />
+        ) : tab === "parcels" && user ? (
+          <Parcels user={user} />
+        ) : tab === "notices" && user ? (
+          <Notices key={user.id} />
         ) : (
           <>
             <ReservationForm

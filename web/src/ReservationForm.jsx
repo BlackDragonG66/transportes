@@ -213,8 +213,19 @@ export default function ReservationForm({
         if (!pos) sessionStorage.removeItem("conexiones-draft");
       }
       if (!pos) {
-        const p = await api(`/bookings/${b.id}/preference`, { method: "POST" });
-        location.assign(p.checkout_url);
+        if (b.isDemo || trip?.demo) {
+          setBooking(
+            await api(`/demo/bookings/${b.id}/pay`, {
+              method: "POST",
+              body: {},
+            }),
+          );
+        } else {
+          const p = await api(`/bookings/${b.id}/preference`, {
+            method: "POST",
+          });
+          location.assign(p.checkout_url);
+        }
       }
     } catch (e) {
       setError(e.message);
@@ -419,7 +430,7 @@ export default function ReservationForm({
                         (new Date(t.arrival_at) - new Date(t.departure_at)) /
                           60000,
                       )}{" "}
-                      min · {t.available} lugares
+                      min · {t.available} lugares {t.demo ? "· DEMO" : ""}
                     </small>
                   </div>
                   <div className="departure-time">
@@ -652,27 +663,38 @@ export default function ReservationForm({
                   )}
                   {!pos && (
                     <div className="payment-note">
-                      <strong>Pago seguro con Mercado Pago</strong>
+                      <strong>
+                        {trip?.demo
+                          ? "Pago de demostración"
+                          : "Pago seguro con Mercado Pago"}
+                      </strong>
                       <p>
                         Los lugares se apartan durante 15 minutos al iniciar el
                         pago, o hasta la salida si ocurre antes. El taxi se
                         solicita después.
                       </p>
-                      {!catalog.integrations?.payments && (
+                      {Boolean(trip?.demo) && (
+                        <p className="notification is-warning is-light mt-3">
+                          Este pago es simulado. No se cobra dinero. Ingresa con
+                          Ana o Luis para probar la compra y el taxi.
+                        </p>
+                      )}
+                      {!trip?.demo && !catalog.integrations?.payments && (
                         <p className="notification is-warning is-light mt-3">
                           El pago en línea estará disponible pronto. Puedes
                           comprar tu boleto en taquilla.
                         </p>
                       )}
-                      {!user && catalog.integrations?.payments && (
-                        <button
-                          type="button"
-                          className="button is-light mt-3"
-                          onClick={onLogin}
-                        >
-                          Ingresa o crea tu cuenta para pagar
-                        </button>
-                      )}
+                      {!user &&
+                        (trip?.demo || catalog.integrations?.payments) && (
+                          <button
+                            type="button"
+                            className="button is-light mt-3"
+                            onClick={onLogin}
+                          >
+                            Ingresa o crea tu cuenta para pagar
+                          </button>
+                        )}
                     </div>
                   )}
                   {booking && (
@@ -739,17 +761,26 @@ export default function ReservationForm({
                 className={`button is-primary ${busy ? "is-loading" : ""}`}
                 disabled={
                   busy ||
-                  (step === 3 && !pos && !catalog.integrations?.payments)
+                  (step === 3 &&
+                    !pos &&
+                    !trip?.demo &&
+                    !catalog.integrations?.payments)
                 }
               >
                 {step === 3
                   ? pos
-                    ? "Confirmar cobro en efectivo"
-                    : booking
-                      ? "Continuar pago"
-                      : user
-                        ? "Ir al pago seguro"
-                        : "Ingresar para pagar"
+                    ? trip?.demo
+                      ? "Confirmar venta DEMO"
+                      : "Confirmar cobro en efectivo"
+                    : trip?.demo
+                      ? user
+                        ? "Confirmar pago simulado"
+                        : "Ingresar para probar"
+                      : booking
+                        ? "Continuar pago"
+                        : user
+                          ? "Ir al pago seguro"
+                          : "Ingresar para pagar"
                   : step === 2
                     ? "Continuar al pago"
                     : "Continuar a extras"}{" "}

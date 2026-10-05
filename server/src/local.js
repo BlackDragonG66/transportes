@@ -1,6 +1,7 @@
 import { pool, transaction, one, fail, insert } from "./db.js";
 import { notify } from "./bookings.js";
 import { config } from "./config.js";
+import { isDemo } from "./demo.js";
 import { uuid, rapidInput, splitLocal } from "./domain.js";
 export async function requestLastMile(actor, bookingId, raw, db = pool) {
   uuid.parse(bookingId);
@@ -89,6 +90,11 @@ export async function acceptLocal(actor, jobId, fleetId, db = pool) {
       [fleetId, actor.id],
     );
     if (!fleet) fail("Vehículo no disponible.", 403);
+    if (
+      (await isDemo(c, "fleet", fleet.id)) !==
+      (await isDemo(c, "trip", b.trip_id))
+    )
+      fail("Los autos DEMO solo atienden salidas de demostración.", 409);
     await c.query("SELECT id FROM local_jobs WHERE id=$1 FOR UPDATE", [jobId]);
     const job = await one(
       c,

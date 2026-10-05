@@ -211,7 +211,8 @@ h4 {
   font-size: 22px;
 }
 .home-hero {
-  height: 465px;
+  min-height: 465px;
+  height: auto;
   background-size: cover;
   background-position: center 58%;
   color: white;
@@ -275,7 +276,7 @@ h4 {
   position: relative;
 }
 .home-container {
-  margin-top: -48px;
+  margin-top: 24px;
 }
 .reservation {
   scroll-margin-top: 25px;

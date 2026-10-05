@@ -11,7 +11,26 @@ import { pool, one, fail, transaction, insert } from "./db.js";
 import { auth, role, session, cookieOptions } from "./auth.js";
 import { uuid } from "./domain.js";
 import { createBooking, notify } from "./bookings.js";
-import { openCash, closeCash } from "./cash.js";
+import { openCash, closeCash, cashSales } from "./cash.js";
+import {
+  demoStatus,
+  demoAccounts,
+  setupDemo,
+  payDemo,
+  isDemo,
+  markDemo,
+} from "./demo.js";
+import { expandSchedule, generateSchedule } from "./schedules.js";
+import {
+  parcelSettings,
+  parcelSettingsInput,
+  parcelInput,
+  quoteParcel,
+  reserveParcel,
+  parcelAction,
+  privateParcel,
+  advanceCargo,
+} from "./parcels.js";
 import {
   createPreference,
   validSignature,
@@ -78,6 +97,134 @@ app.get("/api/health", async (req, res) => {
   res.json({ ok: true });
 });
 app.get("/api/integrations", (req, res) => res.json(integrationStatus()));
+app.get("/api/demo/status", async (req, res) => res.json(await demoStatus()));
+app.get("/api/admin/demo", auth, role("admin"), async (req, res) =>
+  res.json({ ...(await demoStatus()), accounts: await demoAccounts() }),
+);
+app.post("/api/admin/demo/setup", auth, role("admin"), async (req, res) =>
+  res.json(await setupDemo(req.user, req.body)),
+);
+app.post("/api/demo/bookings/:id/pay", auth, async (req, res) =>
+  res.json(await payDemo(req.user, req.params.id)),
+);
+app.post(
+  "/api/admin/schedules/preview",
+  auth,
+  role("admin"),
+  async (req, res) => res.json(expandSchedule(req.body)),
+);
+app.post("/api/admin/schedules", auth, role("admin"), async (req, res) =>
+  res
+    .status(201)
+    .json(
+      await generateSchedule(req.user, req.body, req.get("idempotency-key")),
+    ),
+);
+app.get("/api/parcels/settings", async (req, res) =>
+  res.json(await parcelSettings()),
+);
+app.put(
+  "/api/admin/parcels/settings",
+  auth,
+  role("admin"),
+  async (req, res) => {
+    const v = parcelSettingsInput.parse(req.body);
+    await pool.query(
+      "UPDATE parcel_settings SET base_cents=$1,included_grams=$2,extra_kg_cents=$3,max_grams=$4,max_side_cm=$5,max_declared_cents=$6 WHERE id=1",
+      Object.values(v),
+    );
+    res.json(await parcelSettings());
+  },
+);
+app.post("/api/parcels/quote", auth, async (req, res) =>
+  res.json({
+    totalCents: quoteParcel(
+      parcelInput.parse(req.body),
+      await parcelSettings(),
+    ),
+  }),
+);
+app.post("/api/parcels", auth, async (req, res) =>
+  res
+    .status(201)
+    .json(await reserveParcel(req.user, req.body, req.get("idempotency-key"))),
+);
+app.get("/api/parcels", auth, async (req, res) => {
+  const rows = (
+    await pool.query(
+      `SELECT p.*,r.origin,r.destination,t.departure_at,t.status AS trip_status FROM parcels p JOIN trips t ON t.id=p.trip_id JOIN routes r ON r.id=t.route_id JOIN drivers d ON d.id=t.driver_id WHERE p.user_id=$1 OR $2 OR (d.user_id=$1 AND $3) ORDER BY p.created_at DESC LIMIT 200`,
+      [
+        req.user.id,
+        ["admin", "cashier"].includes(req.user.role),
+        req.user.role === "driver",
+      ],
+    )
+  ).rows;
+  res.json(rows.map((p) => privateParcel(p, req.user)));
+});
+app.post("/api/parcels/:id/action", auth, async (req, res) =>
+  res.json(await parcelAction(req.user, req.params.id, req.body)),
+);
+app.get("/api/parcel-tracking/:token", async (req, res) => {
+  uuid.parse(req.params.token);
+  const p = await one(
+    pool,
+    "SELECT p.id,p.status,p.is_demo,r.origin,r.destination,t.departure_at,t.arrival_at,t.status AS trip_status FROM parcels p JOIN trips t ON t.id=p.trip_id JOIN routes r ON r.id=t.route_id WHERE p.tracking_token=$1",
+    [req.params.token],
+  );
+  if (!p) fail("Envío inexistente.", 404);
+  p.events = (
+    await pool.query(
+      "SELECT status,created_at FROM parcel_events WHERE parcel_id=$1 ORDER BY id",
+      [p.id],
+    )
+  ).rows;
+  res.json(p);
+});
+app.get("/api/notifications", auth, async (req, res) =>
+  res.json(
+    (
+      await pool.query(
+        "SELECT id,title,body,url,created_at FROM notification_outbox WHERE user_id=$1 ORDER BY created_at DESC LIMIT 30",
+        [req.user.id],
+      )
+    ).rows,
+  ),
+);
+app.get(
+  "/api/operations/trips/:id/manifest",
+  auth,
+  role("driver", "admin"),
+  async (req, res) => {
+    uuid.parse(req.params.id);
+    const t = await one(
+      pool,
+      "SELECT t.* FROM trips t JOIN drivers d ON d.id=t.driver_id WHERE t.id=$1 AND (d.user_id=$2 OR $3)",
+      [req.params.id, req.user.id, req.user.role === "admin"],
+    );
+    if (!t) fail("Salida no asignada.", 403);
+    const bookings = (
+      await pool.query(
+        "SELECT b.id,b.passengers,b.boarded_at,b.ticket_token,u.name AS customer FROM bookings b JOIN users u ON u.id=b.user_id WHERE b.trip_id=$1 AND b.status='confirmed'",
+        [t.id],
+      )
+    ).rows;
+    for (const b of bookings)
+      b.travelers = (
+        await pool.query(
+          "SELECT full_name FROM booking_travelers WHERE booking_id=$1 ORDER BY position",
+          [b.id],
+        )
+      ).rows;
+    const parcels = (
+      await pool.query(
+        "SELECT id,description,grams,recipient_name,status FROM parcels WHERE trip_id=$1 AND paid_at IS NOT NULL AND status<>'cancelled'",
+        [t.id],
+      )
+    ).rows;
+    res.json({ trip: t, bookings, parcels });
+  },
+);
 app.get("/api/site", async (req, res) => res.json(await getSite()));
 app.get("/api/media/:id", async (req, res) => {
   uuid.parse(req.params.id);
@@ -151,7 +298,7 @@ app.post("/api/auth/login", loginLimit, async (req, res) => {
   if (!u || !valid) fail("Credenciales inválidas.", 401);
   session(res, u);
   const { password_hash, ...safe } = u;
-  res.json(safe);
+  res.json({ ...safe, demo: await isDemo(pool, "user", u.id) });
 });
 app.post("/api/auth/activate", loginLimit, async (req, res) => {
   const v = z
@@ -248,7 +395,7 @@ app.get("/api/catalog", async (req, res) => {
     pool.query("SELECT * FROM fares"),
     pool.query("SELECT * FROM addons WHERE active"),
     pool.query(
-      `SELECT t.*,r.origin,r.destination,v.brand,v.model,v.plate,t.capacity-COALESCE((SELECT sum(b.passengers) FROM bookings b WHERE b.trip_id=t.id AND (b.status='confirmed' OR (b.status='pending' AND b.expires_at>now()))),0) AS available FROM trips t JOIN routes r ON r.id=t.route_id JOIN vehicles v ON v.id=t.vehicle_id WHERE t.departure_at>now() AND t.status='scheduled' ORDER BY departure_at`,
+      `SELECT t.*,r.origin,r.destination,v.brand,v.model,v.plate,EXISTS(SELECT 1 FROM demo_entities de WHERE de.kind='trip' AND de.entity_id=t.id) AS demo,COALESCE(tc.max_packages,0) AS cargo_packages,COALESCE(tc.max_grams,0) AS cargo_grams,t.capacity-COALESCE((SELECT sum(b.passengers) FROM bookings b WHERE b.trip_id=t.id AND (b.status='confirmed' OR (b.status='pending' AND b.expires_at>now()))),0) AS available FROM trips t JOIN routes r ON r.id=t.route_id JOIN vehicles v ON v.id=t.vehicle_id LEFT JOIN trip_cargo tc ON tc.trip_id=t.id WHERE t.departure_at>now() AND t.status='scheduled' ORDER BY departure_at`,
     ),
   ]);
   res.json({
@@ -300,7 +447,10 @@ app.post("/api/payments/webhook", async (req, res) => {
 });
 app.get("/api/cash", auth, role("cashier", "admin"), async (req, res) => {
   const [registers, sessions, customers] = await Promise.all([
-    pool.query("SELECT * FROM cash_registers"),
+    pool.query(
+      "SELECT cr.* FROM cash_registers cr WHERE $2 OR EXISTS(SELECT 1 FROM demo_entities WHERE kind='register' AND entity_id=cr.id) = EXISTS(SELECT 1 FROM demo_entities WHERE kind='user' AND entity_id=$1)",
+      [req.user.id, req.user.role === "admin"],
+    ),
     pool.query(
       "SELECT * FROM cash_sessions WHERE cashier_id=$1 ORDER BY opened_at DESC LIMIT 30",
       [req.user.id],
@@ -350,6 +500,8 @@ app.post(
           password_hash: password,
         }),
       );
+      const demo = await isDemo(c, "user", req.user.id);
+      if (demo) await markDemo(c, `customer:${user.id}`, "user", user.id);
       const token = randomBytes(32).toString("hex"),
         hash = createHash("sha256").update(token).digest("hex");
       await c.query(
@@ -364,7 +516,12 @@ app.post(
         `${config.appUrl}/activate/${token}`,
         `account:${hash}`,
       );
-      return user;
+      return {
+        ...user,
+        ...(demo
+          ? { activationUrl: `${config.appUrl}/activate/${token}` }
+          : {}),
+      };
     });
     res.status(201).json(customer);
   },
@@ -388,12 +545,7 @@ app.get(
       [req.params.id, req.user.id, req.user.role === "admin"],
     );
     if (!s) fail("Caja inexistente.", 404);
-    const sales = (
-      await pool.query(
-        `SELECT b.id,b.passengers,b.total_cents,b.created_at,p.amount_cents FROM bookings b JOIN payments p ON p.booking_id=b.id WHERE b.cash_session_id=$1 AND p.provider='cash' AND p.status='approved' ORDER BY b.created_at`,
-        [s.id],
-      )
-    ).rows;
+    const sales = await cashSales(pool, s.id);
     res.json({
       ...s,
       sales,
@@ -410,7 +562,7 @@ app.get("/api/local/jobs", auth, role("driver", "admin"), async (req, res) => {
   ).rows;
   const jobs = (
     await pool.query(
-      `SELECT j.*,r.zone,t.arrival_at,rt.destination FROM local_jobs j JOIN last_mile_requests r ON r.id=j.request_id JOIN bookings b ON b.id=r.booking_id JOIN trips t ON t.id=b.trip_id JOIN routes rt ON rt.id=t.route_id WHERE b.status='confirmed' AND (j.status='waiting' OR j.fleet_id IN (SELECT f.id FROM local_fleet f JOIN drivers d ON d.id=f.driver_id WHERE d.user_id=$1)) ORDER BY t.arrival_at`,
+      `SELECT j.*,r.zone,t.arrival_at,rt.destination,CASE WHEN j.fleet_id IN (SELECT f.id FROM local_fleet f JOIN drivers d ON d.id=f.driver_id WHERE d.user_id=$1) THEN u.name END AS customer_name,CASE WHEN j.fleet_id IN (SELECT f.id FROM local_fleet f JOIN drivers d ON d.id=f.driver_id WHERE d.user_id=$1) THEN u.phone END AS customer_phone FROM local_jobs j JOIN last_mile_requests r ON r.id=j.request_id JOIN bookings b ON b.id=r.booking_id JOIN users u ON u.id=b.user_id JOIN trips t ON t.id=b.trip_id JOIN routes rt ON rt.id=t.route_id WHERE b.status='confirmed' AND (j.status='waiting' OR j.fleet_id IN (SELECT f.id FROM local_fleet f JOIN drivers d ON d.id=f.driver_id WHERE d.user_id=$1)) ORDER BY t.arrival_at`,
       [req.user.id],
     )
   ).rows;
@@ -518,6 +670,7 @@ app.get("/api/ticket/:token", auth, async (req, res) => {
   );
   res.json({
     booking: b,
+    isDemo: await isDemo(pool, "trip", b.trip_id),
     trip,
     local,
     lastMile,
@@ -538,6 +691,15 @@ app.post(
   async (req, res) => {
     uuid.parse(req.params.token);
     const b = await transaction(async (c) => {
+      const lookup = await one(
+        c,
+        "SELECT trip_id FROM bookings WHERE ticket_token=$1",
+        [req.params.token],
+      );
+      if (!lookup) fail("Boleto no válido.", 409);
+      await c.query("SELECT id FROM trips WHERE id=$1 FOR UPDATE", [
+        lookup.trip_id,
+      ]);
       const b = await one(
         c,
         "SELECT * FROM bookings WHERE ticket_token=$1 FOR UPDATE",
@@ -741,7 +903,19 @@ app.post("/api/admin/:table", auth, role("admin"), async (req, res) => {
       v.departure_at = new Date(v.departure_at);
       v.arrival_at = new Date(v.arrival_at);
     }
-    return insert(c, table, v);
+    const row = await insert(c, table, v);
+    if (table === "trips") {
+      await c.query("INSERT INTO trip_cargo VALUES($1,20,100000)", [row.id]);
+      if (
+        (await isDemo(c, "vehicle", v.vehicle_id)) ||
+        (await isDemo(c, "driver", v.driver_id))
+      )
+        await c.query("INSERT INTO demo_entities VALUES($1,'trip',$2)", [
+          `trip:${row.id}`,
+          row.id,
+        ]);
+    }
+    return row;
   });
   res.status(201).json(result);
 });
@@ -806,6 +980,7 @@ app.patch(
         )
           fail("La unidad tiene otro viaje activo.", 409);
         await c.query("UPDATE trips SET status=$2 WHERE id=$1", [t.id, status]);
+        await advanceCargo(c, t, status, req.user);
         return one(c, "SELECT * FROM trips WHERE id=$1", [t.id]);
       }),
     );
@@ -887,18 +1062,14 @@ app.use((error, req, res, next) => {
   )
     return res.status(400).json({ error: "Datos o relaciones inválidos." });
   if (["ER_LOCK_DEADLOCK", "ER_LOCK_WAIT_TIMEOUT"].includes(error.code))
-    return res
-      .status(409)
-      .json({
-        error:
-          "El recurso está ocupado. Intenta de nuevo con la misma solicitud.",
-      });
+    return res.status(409).json({
+      error:
+        "El recurso está ocupado. Intenta de nuevo con la misma solicitud.",
+    });
   if (error.type === "entity.parse.failed")
     return res.status(400).json({ error: "JSON inválido." });
   if (!error.status) console.error(error);
-  res
-    .status(error.status || 500)
-    .json({
-      error: error.status ? error.message : "Error interno. Intenta de nuevo.",
-    });
+  res.status(error.status || 500).json({
+    error: error.status ? error.message : "Error interno. Intenta de nuevo.",
+  });
 });

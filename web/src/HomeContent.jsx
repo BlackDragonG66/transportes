@@ -161,12 +161,22 @@ export function HomeContent({ site }) {
               "Viaje Rápido",
               "Con tu boleto confirmado, solicita un auto para tu colonia o zona de llegada.",
             ],
+            [
+              "05",
+              "Paquetería",
+              "Envíos de taquilla a taquilla, seguimiento y entrega con código.",
+            ],
           ].map(([n, title, text]) => (
             <article key={n}>
               <span>{n}</span>
               <div>
                 <h3>{title}</h3>
                 <p>{text}</p>
+                {n === "05" && (
+                  <a className="service-parcel-link" href="/#parcels">
+                    Solicitar un envío →
+                  </a>
+                )}
               </div>
             </article>
           ))}

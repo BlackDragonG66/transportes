@@ -153,3 +153,60 @@ CREATE TABLE IF NOT EXISTS media_assets (
  FOREIGN KEY(created_by) REFERENCES users(id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 INSERT INTO schema_migrations(version) VALUES(2) ON DUPLICATE KEY UPDATE version=version;
+
+-- Simulated payments have their own ledger, separate from real payments.
+CREATE TABLE IF NOT EXISTS demo_entities (
+ demo_key VARCHAR(180) PRIMARY KEY, kind VARCHAR(24) NOT NULL, entity_id CHAR(36) NOT NULL,
+ UNIQUE KEY demo_entity(kind,entity_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+CREATE TABLE IF NOT EXISTS demo_state (
+ id TINYINT PRIMARY KEY, start_date DATE NULL, end_date DATE NULL,
+ updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+INSERT IGNORE INTO demo_state(id) VALUES(1);
+CREATE TABLE IF NOT EXISTS demo_payments (
+ booking_id CHAR(36) PRIMARY KEY, amount_cents INT NOT NULL CHECK(amount_cents>0),
+ method ENUM('web','pos') NOT NULL, created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+ FOREIGN KEY(booking_id) REFERENCES bookings(id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+CREATE TABLE IF NOT EXISTS schedule_batches (
+ actor_id CHAR(36) NOT NULL, idempotency_key CHAR(36) NOT NULL, request_hash CHAR(64) NOT NULL,
+ metadata JSON NOT NULL, PRIMARY KEY(actor_id,idempotency_key), FOREIGN KEY(actor_id) REFERENCES users(id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+CREATE TABLE IF NOT EXISTS parcel_settings (
+ id TINYINT PRIMARY KEY, base_cents INT NOT NULL CHECK(base_cents>0),
+ included_grams INT NOT NULL CHECK(included_grams>0), extra_kg_cents INT NOT NULL CHECK(extra_kg_cents>=0),
+ max_grams INT NOT NULL CHECK(max_grams>0), max_side_cm INT NOT NULL CHECK(max_side_cm>0),
+ max_declared_cents INT NOT NULL CHECK(max_declared_cents>=0)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+INSERT IGNORE INTO parcel_settings VALUES(1,12000,5000,1500,30000,100,500000);
+CREATE TABLE IF NOT EXISTS trip_cargo (
+ trip_id CHAR(36) PRIMARY KEY, max_packages INT NOT NULL CHECK(max_packages BETWEEN 0 AND 200),
+ max_grams INT NOT NULL CHECK(max_grams BETWEEN 0 AND 1000000), FOREIGN KEY(trip_id) REFERENCES trips(id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+CREATE TABLE IF NOT EXISTS parcels (
+ id CHAR(36) PRIMARY KEY, trip_id CHAR(36) NOT NULL, user_id CHAR(36) NOT NULL, created_by CHAR(36) NOT NULL,
+ cash_session_id CHAR(36) NULL, sender_name VARCHAR(120) NOT NULL, sender_phone VARCHAR(25) NOT NULL,
+ recipient_name VARCHAR(120) NOT NULL, recipient_phone VARCHAR(25) NOT NULL, description VARCHAR(250) NOT NULL,
+ grams INT NOT NULL CHECK(grams BETWEEN 1 AND 30000), length_cm INT NOT NULL CHECK(length_cm BETWEEN 1 AND 100),
+ width_cm INT NOT NULL CHECK(width_cm BETWEEN 1 AND 100), height_cm INT NOT NULL CHECK(height_cm BETWEEN 1 AND 100),
+ declared_cents INT NOT NULL CHECK(declared_cents>=0), total_cents INT NOT NULL CHECK(total_cents>0),
+ is_demo BOOLEAN NOT NULL DEFAULT FALSE,
+ status ENUM('reserved','received','loaded','in_transit','arrived','delivered','cancelled') NOT NULL DEFAULT 'reserved',
+ paid_at DATETIME(3) NULL, expires_at DATETIME(3) NOT NULL, tracking_token CHAR(36) NOT NULL UNIQUE,
+ pickup_code VARCHAR(6) NOT NULL, idempotency_key CHAR(36) NOT NULL, request_hash CHAR(64) NOT NULL,
+ created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3), updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+ UNIQUE KEY parcel_request(created_by,idempotency_key), INDEX parcel_capacity(trip_id,status,expires_at),
+ FOREIGN KEY(trip_id) REFERENCES trips(id), FOREIGN KEY(user_id) REFERENCES users(id),
+ FOREIGN KEY(created_by) REFERENCES users(id), FOREIGN KEY(cash_session_id) REFERENCES cash_sessions(id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+CREATE TABLE IF NOT EXISTS parcel_keys (
+ actor_id CHAR(36) NOT NULL, idempotency_key CHAR(36) NOT NULL,
+ PRIMARY KEY(actor_id,idempotency_key), FOREIGN KEY(actor_id) REFERENCES users(id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+CREATE TABLE IF NOT EXISTS parcel_events (
+ id BIGINT AUTO_INCREMENT PRIMARY KEY, parcel_id CHAR(36) NOT NULL, status VARCHAR(24) NOT NULL,
+ actor_id CHAR(36) NOT NULL, created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+ FOREIGN KEY(parcel_id) REFERENCES parcels(id), FOREIGN KEY(actor_id) REFERENCES users(id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+INSERT IGNORE INTO schema_migrations(version) VALUES(3);

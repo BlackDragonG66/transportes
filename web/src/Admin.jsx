@@ -2,6 +2,8 @@ import { useEffect, useState } from "react";
 import { api, money } from "./api.js";
 import ContentAdmin from "./ContentAdmin.jsx";
 import { TeamAdmin } from "./Account.jsx";
+import { DemoAdmin } from "./Demo.jsx";
+import ScheduleAdmin from "./ScheduleAdmin.jsx";
 const forms = {
   vehicles: {
     label: "Unidad interurbana",
@@ -131,6 +133,8 @@ export default function Admin({ onChanged }) {
             ["content", "Página y publicidad"],
             ["operations", "Rutas, unidades y tarifas"],
             ["team", "Equipo y accesos"],
+            ["schedule", "Programar salidas"],
+            ["demo", "Demostración y paquetería"],
           ].map(([key, title]) => (
             <button
               key={key}
@@ -143,6 +147,10 @@ export default function Admin({ onChanged }) {
         </div>
         {section === "content" ? (
           <ContentAdmin onChanged={onChanged} />
+        ) : section === "demo" ? (
+          <DemoAdmin onChanged={load} />
+        ) : section === "schedule" ? (
+          <ScheduleAdmin resources={resources} onChanged={load} />
         ) : (
           <TeamAdmin />
         )}
@@ -161,6 +169,15 @@ export default function Admin({ onChanged }) {
         <button className="button is-primary">Rutas, unidades y tarifas</button>
         <button className="button is-light" onClick={() => setSection("team")}>
           Equipo y accesos
+        </button>
+        <button
+          className="button is-light"
+          onClick={() => setSection("schedule")}
+        >
+          Programar salidas
+        </button>
+        <button className="button is-light" onClick={() => setSection("demo")}>
+          Demostración y paquetería
         </button>
       </div>
       {integrations && (

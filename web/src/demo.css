@@ -1,0 +1,304 @@
+/* Content can grow without fixed hero heights or negative overlap. */
+.home-hero {
+  height: auto;
+  min-height: 465px;
+}
+.home-container {
+  margin-top: 24px;
+}
+.hero-inner {
+  padding-bottom: 65px;
+}
+.demo-banner {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 12px;
+  padding: 11px 22px;
+  background: #fff2d7;
+  color: #714609;
+  font-size: 12px;
+  line-height: 1.6;
+  flex-wrap: wrap;
+  text-align: center;
+}
+.demo-guide {
+  background: #fff9ee;
+  border: 1px solid #f2d9ad;
+  border-radius: 12px;
+  padding: 16px 20px;
+  margin-bottom: 24px;
+  color: #6f4c19;
+  font-size: 13px;
+  line-height: 1.8;
+}
+.demo-guide summary {
+  cursor: pointer;
+  font-weight: 700;
+}
+.demo-guide ol {
+  margin: 15px 0 12px 22px;
+}
+.demo-guide li {
+  padding-bottom: 7px;
+}
+.demo-controls {
+  display: flex;
+  gap: 20px;
+  align-items: end;
+  flex-wrap: wrap;
+  margin-top: 24px;
+}
+.demo-controls label {
+  display: grid;
+  gap: 8px;
+}
+.demo-controls small {
+  color: #88718d;
+}
+.weekday-options {
+  display: flex;
+  gap: 18px;
+  flex-wrap: wrap;
+}
+.schedule-time {
+  max-width: 135px;
+}
+.schedule-preview {
+  background: #f7f2fa;
+  max-height: 300px;
+  overflow: auto;
+  padding: 20px;
+  margin: 20px 0;
+  border-radius: 10px;
+}
+.schedule-preview ul {
+  margin: 12px 0 0 20px;
+  line-height: 1.9;
+}
+.operation-trip,
+.manifest-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 20px;
+  padding: 18px 0;
+  border-bottom: 1px solid #ece3f0;
+}
+.operation-trip .buttons,
+.manifest-row .buttons {
+  margin: 0;
+  flex-shrink: 0;
+}
+.operation-trip p,
+.manifest-row p {
+  font-size: 13px;
+  color: #826b8a;
+  margin-top: 8px;
+  line-height: 1.8;
+}
+.manifest-row ul {
+  padding: 10px 0 10px 20px;
+  font-size: 13px;
+  line-height: 1.8;
+}
+.assigned-contact {
+  background: #f6f1fa;
+  padding: 10px 14px;
+  border-radius: 8px;
+}
+.parcel-heading {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 20px;
+  margin-bottom: 30px;
+}
+.parcel-heading > span {
+  font-size: 60px;
+}
+.parcel-heading .title {
+  margin-bottom: 14px;
+}
+.parcel-price {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  flex-wrap: wrap;
+  padding: 12px 0 22px;
+}
+.parcel-price strong {
+  font-size: 22px;
+  color: var(--purple);
+}
+.parcel-card-title {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 14px;
+}
+.parcel-card-title h3 {
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--purple);
+  flex: 1;
+}
+.parcel-card p {
+  font-size: 13px;
+  line-height: 1.8;
+}
+.pickup-input {
+  max-width: 190px;
+}
+.parcel-timeline {
+  margin: 30px 0 0 24px;
+}
+.parcel-timeline li {
+  padding: 12px 0;
+}
+.parcel-timeline small,
+.notice-card small {
+  display: block;
+  font-size: 11px;
+  color: #917799;
+}
+.notice-card {
+  padding: 18px 0;
+  border-bottom: 1px solid #eee3f3;
+}
+.notice-card p {
+  font-size: 13px;
+  margin: 8px 0;
+}
+.service-parcel-link {
+  display: inline-block;
+  margin-top: 12px;
+  font-weight: 700;
+  font-size: 12px;
+}
+.box,
+.column,
+.wizard-grid > *,
+.booking-title > * {
+  min-width: 0;
+}
+.box p,
+.box h1,
+.box h2,
+.box h3,
+.driver-card h2,
+.table td {
+  overflow-wrap: anywhere;
+}
+.table-container {
+  max-width: 100%;
+}
+.cash-controls .select {
+  max-width: 100%;
+}
+.cash-controls select {
+  max-width: 100%;
+}
+.title {
+  line-height: 1.25;
+}
+.booking-title h2 {
+  line-height: 1.25;
+}
+.header-inner {
+  gap: 18px;
+}
+.brand {
+  flex-shrink: 0;
+}
+.header-actions {
+  flex-shrink: 0;
+}
+.main-nav {
+  min-width: 0;
+}
+@media (max-width: 900px) {
+  .home-hero {
+    min-height: 390px;
+  }
+  .hero-inner {
+    padding-bottom: 45px;
+  }
+  .home-container {
+    margin-top: 24px;
+  }
+  .manifest-row,
+  .operation-trip {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+  .manifest-row .buttons,
+  .operation-trip .buttons {
+    flex-shrink: 1;
+    flex-wrap: wrap;
+  }
+  .main-nav {
+    flex-wrap: wrap;
+  }
+  .demo-controls {
+    align-items: stretch;
+  }
+  .demo-controls label {
+    width: 100%;
+  }
+}
+@media (max-width: 540px) {
+  .home-hero {
+    min-height: 0;
+  }
+  .hero-inner {
+    padding-bottom: 40px;
+  }
+  .parcel-heading > span {
+    font-size: 40px;
+  }
+  .parcel-heading .title {
+    font-size: 26px;
+  }
+  .parcel-card-title h3 {
+    flex-basis: 100%;
+  }
+  .demo-banner {
+    gap: 4px;
+    padding: 10px 18px;
+  }
+  .demo-guide {
+    padding: 14px;
+    font-size: 12px;
+  }
+  .demo-controls button {
+    white-space: normal;
+    height: auto;
+    padding: 12px;
+  }
+  .buttons .button {
+    max-width: 100%;
+    white-space: normal;
+    height: auto;
+    min-height: 36px;
+  }
+  .parcel-price {
+    gap: 8px;
+  }
+  .parcel-card .buttons {
+    align-items: stretch;
+  }
+  .operation-trip .buttons {
+    gap: 8px;
+  }
+  .pickup-input {
+    max-width: 100%;
+  }
+  .booking-title {
+    gap: 14px;
+  }
+  .step-caption {
+    flex-shrink: 0;
+  }
+}
