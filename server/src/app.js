@@ -557,14 +557,14 @@ app.get(
 app.get("/api/local/jobs", auth, role("driver", "admin"), async (req, res) => {
   const fleet = (
     await pool.query(
-      "SELECT f.*,d.user_id AS owner_id,u.name AS driver_name FROM local_fleet f JOIN drivers d ON d.id=f.driver_id JOIN users u ON u.id=d.user_id WHERE (d.user_id=$1 OR $2='admin') AND f.active AND d.active",
-      [req.user.id, req.user.role],
+      "SELECT f.*,d.user_id AS owner_id,u.name AS driver_name FROM local_fleet f JOIN drivers d ON d.id=f.driver_id JOIN users u ON u.id=d.user_id WHERE (d.user_id=$1 OR $2=1) AND f.active AND d.active",
+      [req.user.id, req.user.role === "admin" ? 1 : 0],
     )
   ).rows;
   const jobs = (
     await pool.query(
-      `SELECT j.*,b.trip_id,r.zone,t.arrival_at,rt.destination,f.model,f.city,du.name AS driver_name,d.user_id AS owner_id,CASE WHEN d.user_id=$1 OR $2='admin' THEN u.name END AS customer_name,CASE WHEN d.user_id=$1 OR $2='admin' THEN u.phone END AS customer_phone FROM local_jobs j JOIN last_mile_requests r ON r.id=j.request_id JOIN bookings b ON b.id=r.booking_id JOIN users u ON u.id=b.user_id JOIN trips t ON t.id=b.trip_id JOIN routes rt ON rt.id=t.route_id LEFT JOIN local_fleet f ON f.id=j.fleet_id LEFT JOIN drivers d ON d.id=f.driver_id LEFT JOIN users du ON du.id=d.user_id WHERE b.status='confirmed' AND (j.status='waiting' OR d.user_id=$1 OR $2='admin') ORDER BY t.arrival_at`,
-      [req.user.id, req.user.role],
+      `SELECT j.*,b.trip_id,r.zone,t.arrival_at,rt.destination,f.model,f.city,du.name AS driver_name,d.user_id AS owner_id,CASE WHEN d.user_id=$1 OR $2=1 THEN u.name END AS customer_name,CASE WHEN d.user_id=$1 OR $2=1 THEN u.phone END AS customer_phone FROM local_jobs j JOIN last_mile_requests r ON r.id=j.request_id JOIN bookings b ON b.id=r.booking_id JOIN users u ON u.id=b.user_id JOIN trips t ON t.id=b.trip_id JOIN routes rt ON rt.id=t.route_id LEFT JOIN local_fleet f ON f.id=j.fleet_id LEFT JOIN drivers d ON d.id=f.driver_id LEFT JOIN users du ON du.id=d.user_id WHERE b.status='confirmed' AND (j.status='waiting' OR d.user_id=$1 OR $2=1) ORDER BY t.arrival_at`,
+      [req.user.id, req.user.role === "admin" ? 1 : 0],
     )
   ).rows;
   const used = new Set(

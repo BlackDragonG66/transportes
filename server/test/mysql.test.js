@@ -9,6 +9,7 @@ test('parámetros repetidos y desordenados se enlazan correctamente',()=>{
 test('conexión Hostinger admite contraseña especial sin exigir URL',()=>{
  const options=mysqlOptions({DB_HOST:'localhost',DB_USER:'u123_user',DB_PASSWORD:'p@ss:#/%',DB_NAME:'u123_conexiones'});
  assert.equal(options.password,'p@ss:#/%');assert.equal(options.port,3306);assert.equal(options.database,'u123_conexiones');assert.equal(options.timezone,'Z');
+ assert.equal(options.charset,'utf8mb4_unicode_ci'); // Same collation for literals, bound parameters and schema on Hostinger.
  assert.equal(mysqlOptions({DATABASE_URL:'mysql://test:p%40ss@localhost:3306/test_db'}).password,'p@ss');
  assert.throws(()=>mysqlOptions({DATABASE_URL:'postgres://localhost/test'}));
 });

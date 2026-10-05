@@ -24,7 +24,7 @@ export function mysqlOptions(env=process.env) {
   host:url?.hostname||env.DB_HOST||'localhost',port:Number(url?.port||env.DB_PORT||3306),
   user:url?decodeURIComponent(url.username):env.DB_USER,password:url?decodeURIComponent(url.password):env.DB_PASSWORD,
   database:url?decodeURIComponent(url.pathname.slice(1)):env.DB_NAME,
-  timezone:'Z',charset:'utf8mb4',decimalNumbers:true,connectionLimit:10,connectTimeout:10000,
+  timezone:'Z',charset:'utf8mb4_unicode_ci',decimalNumbers:true,connectionLimit:10,connectTimeout:10000,
   ...(env.DB_SSL==='true'?{ssl:{rejectUnauthorized:true}}:{})
  };
 }
