@@ -224,3 +224,15 @@ JOIN local_fleet f ON f.id=j.fleet_id JOIN last_mile_requests r ON r.id=j.reques
 JOIN bookings b ON b.id=r.booking_id WHERE j.accepted_at IS NOT NULL
 GROUP BY b.trip_id,f.driver_id;
 INSERT IGNORE INTO schema_migrations(version) VALUES(4);
+
+CREATE TABLE IF NOT EXISTS trip_driver_acceptances (
+ trip_id CHAR(36) PRIMARY KEY, driver_id CHAR(36) NOT NULL, accepted_by CHAR(36) NOT NULL,
+ accepted_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+ FOREIGN KEY(trip_id) REFERENCES trips(id), FOREIGN KEY(driver_id) REFERENCES drivers(id),
+ FOREIGN KEY(accepted_by) REFERENCES users(id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+-- Keep already started departures operable after upgrading.
+INSERT IGNORE INTO trip_driver_acceptances(trip_id,driver_id,accepted_by)
+SELECT t.id,t.driver_id,d.user_id FROM trips t JOIN drivers d ON d.id=t.driver_id
+WHERE t.status IN ('boarding','en_route','arrived');
+INSERT IGNORE INTO schema_migrations(version) VALUES(5);

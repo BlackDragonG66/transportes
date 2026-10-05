@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { api } from "./api.js";
-export function Auth({ onUser }) {
+export function Auth({ onUser, loginOnly = false, title }) {
   const [register, setRegister] = useState(false),
     [values, setValues] = useState({}),
     [error, setError] = useState(""),
@@ -25,7 +25,7 @@ export function Auth({ onUser }) {
   return (
     <form className="box auth-box" onSubmit={submit}>
       <h2 className="title is-4">
-        {register ? "Crea tu cuenta" : "Bienvenido de nuevo"}
+        {title || (register ? "Crea tu cuenta" : "Bienvenido de nuevo")}
       </h2>
       {(register
         ? ["name", "phone", "email", "password"]
@@ -86,17 +86,19 @@ export function Auth({ onUser }) {
       >
         {register ? "Registrarme" : "Entrar"}
       </button>
-      <button
-        className="button is-text mt-3"
-        type="button"
-        onClick={() => {
-          setRegister(!register);
-          setValues({});
-          setError("");
-        }}
-      >
-        {register ? "Ya tengo cuenta" : "Crear una cuenta"}
-      </button>
+      {!loginOnly && (
+        <button
+          className="button is-text mt-3"
+          type="button"
+          onClick={() => {
+            setRegister(!register);
+            setValues({});
+            setError("");
+          }}
+        >
+          {register ? "Ya tengo cuenta" : "Crear una cuenta"}
+        </button>
+      )}
       {!register && (
         <button
           type="button"

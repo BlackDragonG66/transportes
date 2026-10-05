@@ -38,7 +38,8 @@ import {
   reconcilePayment,
 } from "./mercadopago.js";
 import { acceptLocal, requestLastMile } from "./local.js";
-import { coversArrival, localCities } from "./local-cities.js";
+import { coversArrival, localCities, arrivalCity } from "./local-cities.js";
+import { staffProfile, acceptDeparture } from "./staff.js";
 import { pushSchema } from "./notifications.js";
 import {
   getSite,
@@ -370,6 +371,21 @@ app.post("/api/auth/logout", (req, res) => {
   res.sendStatus(204);
 });
 app.get("/api/auth/me", auth, (req, res) => res.json(req.user));
+app.get(
+  "/api/staff/profile",
+  auth,
+  role("driver", "cashier", "admin"),
+  async (req, res) => res.json(await staffProfile(req.user)),
+);
+app.post(
+  "/api/operations/trips/:id/accept",
+  auth,
+  role("driver", "admin"),
+  async (req, res) => {
+    z.object({}).strict().parse(req.body);
+    res.json(await acceptDeparture(req.user, req.params.id));
+  },
+);
 app.post("/api/auth/password", auth, loginLimit, async (req, res) => {
   const v = z
     .object({
@@ -590,7 +606,11 @@ app.get("/api/local/jobs", auth, role("driver", "admin"), async (req, res) => {
   );
   res.json({
     fleet: fleet.map((f) => ({ ...f, owned: f.owner_id === req.user.id })),
-    jobs: eligible.map((j) => ({ ...j, owned: j.owner_id === req.user.id })),
+    jobs: eligible.map((j) => ({
+      ...j,
+      owned: j.owner_id === req.user.id,
+      service_city: arrivalCity(j.destination),
+    })),
   });
 });
 app.post(
@@ -971,12 +991,15 @@ app.patch(
       await transaction(async (c) => {
         const lookup = await one(
           c,
-          "SELECT vehicle_id FROM trips WHERE id=$1",
+          "SELECT vehicle_id,driver_id FROM trips WHERE id=$1",
           [req.params.id],
         );
         if (!lookup) fail("Viaje inexistente.", 404);
         await c.query("SELECT id FROM vehicles WHERE id=$1 FOR UPDATE", [
           lookup.vehicle_id,
+        ]);
+        await c.query("SELECT id FROM drivers WHERE id=$1 FOR UPDATE", [
+          lookup.driver_id,
         ]);
         await c.query("SELECT id FROM trips WHERE id=$1 FOR UPDATE", [
           req.params.id,
@@ -995,6 +1018,24 @@ app.patch(
         )
           fail("Transición inválida.", 409);
         // A physical unit can expose only one active trip through its QR.
+        if (
+          status === "boarding" &&
+          (await one(
+            c,
+            "SELECT id FROM trips WHERE driver_id=$1 AND id<>$2 AND status IN ('boarding','en_route')",
+            [t.driver_id, t.id],
+          ))
+        )
+          fail("El conductor tiene otro viaje activo.", 409);
+        if (
+          status === "boarding" &&
+          !(await one(
+            c,
+            "SELECT trip_id FROM trip_driver_acceptances WHERE trip_id=$1 AND driver_id=$2",
+            [t.id, t.driver_id],
+          ))
+        )
+          fail("Acepta la salida asignada antes de iniciar el abordaje.", 409);
         if (
           status === "boarding" &&
           (await one(
@@ -1019,7 +1060,7 @@ app.get(
     res.json(
       (
         await pool.query(
-          `SELECT t.*,r.origin,r.destination FROM trips t JOIN routes r ON r.id=t.route_id JOIN drivers d ON d.id=t.driver_id WHERE ($2 OR d.user_id=$1) AND t.status<>'arrived' ORDER BY departure_at`,
+          `SELECT t.*,r.origin,r.destination,v.brand,v.model,v.plate,u.name AS driver_name,a.accepted_at FROM trips t JOIN routes r ON r.id=t.route_id JOIN vehicles v ON v.id=t.vehicle_id JOIN drivers d ON d.id=t.driver_id JOIN users u ON u.id=d.user_id LEFT JOIN trip_driver_acceptances a ON a.trip_id=t.id AND a.driver_id=t.driver_id WHERE ($2 OR d.user_id=$1) AND t.status<>'cancelled' AND (t.departure_at>=DATE_SUB(now(),INTERVAL 30 DAY) OR t.status IN ('boarding','en_route')) ORDER BY departure_at LIMIT 600`,
           [req.user.id, req.user.role === "admin"],
         )
       ).rows,

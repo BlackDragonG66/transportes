@@ -6,9 +6,8 @@ import "./demo.css";
 import { api, date, money, enablePush, disablePush } from "./api.js";
 import ReservationForm from "./ReservationForm.jsx";
 import BoardingView from "./BoardingView.jsx";
-import POS from "./POS.jsx";
-import Operations from "./Operations.jsx";
-import Admin from "./Admin.jsx";
+import StaffPortal from "./StaffPortal.jsx";
+import { staffArea, staffPaths } from "./staff-routing.js";
 import Account from "./Account.jsx";
 import { Auth, Activate } from "./Auth.jsx";
 import { HomeHero, HomeContent, SiteFooter } from "./HomeContent.jsx";
@@ -148,6 +147,17 @@ function App() {
     requiresAuth = match?.[1] === "ticket";
   const settings = site?.settings,
     home = !match && !activation && tab === "reserve";
+  useEffect(() => {
+    if (
+      loaded &&
+      user &&
+      staffPaths[user.role] &&
+      !match &&
+      !activation &&
+      !new URLSearchParams(location.search).has("pasajeros")
+    )
+      location.replace(staffPaths[user.role]);
+  }, [loaded, user?.id]);
   function go(value) {
     setTab(value);
     setMenu(false);
@@ -268,13 +278,6 @@ function App() {
               ["bookings", "Mis reservas"],
               ["parcels", "Paquetería"],
               ["notices", "Mis avisos"],
-              ...(["admin", "cashier"].includes(user.role)
-                ? [["pos", "Taquilla"]]
-                : []),
-              ...(["admin", "driver"].includes(user.role)
-                ? [["operations", "Operación"]]
-                : []),
-              ...(user.role === "admin" ? [["admin", "Administración"]] : []),
               ["account", "Mi cuenta"],
             ].map(([id, label]) => (
               <button
@@ -285,6 +288,11 @@ function App() {
                 {label}
               </button>
             ))}
+            {staffPaths[user.role] && (
+              <a className="button is-light" href={staffPaths[user.role]}>
+                Mi espacio de trabajo
+              </a>
+            )}
             <button
               className="push-button"
               onClick={async () => {
@@ -301,6 +309,11 @@ function App() {
           </nav>
         )}
         {!match && <DemoGuide user={user} />}
+        {match && user && staffPaths[user.role] && (
+          <a className="button is-light mb-4" href={staffPaths[user.role]}>
+            Volver a mi espacio de trabajo
+          </a>
+        )}
         {message && (
           <p className="notification" role="status">
             {message}
@@ -331,12 +344,6 @@ function App() {
           )
         ) : !user && tab !== "reserve" ? (
           <Auth onUser={setUser} />
-        ) : tab === "pos" && ["admin", "cashier"].includes(user?.role) ? (
-          <POS user={user} />
-        ) : tab === "operations" && ["admin", "driver"].includes(user?.role) ? (
-          <Operations />
-        ) : tab === "admin" && user?.role === "admin" ? (
-          <Admin onChanged={loadSite} />
         ) : tab === "account" && user ? (
           <Account user={user} />
         ) : tab === "bookings" && user ? (
@@ -387,4 +394,18 @@ function App() {
     </>
   );
 }
-createRoot(document.getElementById("root")).render(<App />);
+let area = staffArea(location.pathname);
+const legacyAreas = { operations: "drivers", pos: "cash", admin: "admin" };
+if (location.pathname === "/" && legacyAreas[location.hash.slice(1)]) {
+  area = legacyAreas[location.hash.slice(1)];
+  history.replaceState(
+    null,
+    "",
+    { drivers: "/conductores", cash: "/cajeros", admin: "/administracion" }[
+      area
+    ],
+  );
+}
+createRoot(document.getElementById("root")).render(
+  area ? <StaffPortal area={area} /> : <App />,
+);

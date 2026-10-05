@@ -152,7 +152,7 @@ export async function acceptLocal(actor, jobId, fleetId, db = pool) {
       actor.id,
       "Viaje Rápido aceptado",
       `Cliente: ${customer.name}, teléfono ${customer.phone}. Zona: ${job.zone}. ${job.passengers} pasajeros, ${job.luggage} maletas. Llegada: ${new Date(job.arrival_at).toISOString()}.`,
-      `${config.appUrl}/`,
+      `${config.appUrl}/conductores#taxi`,
       `local-driver:${job.id}`,
     );
     return updated;

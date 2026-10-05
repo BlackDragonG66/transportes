@@ -680,6 +680,12 @@ test("Recorrido HTTP completo: cliente, cajera, conductor, Uber y entrega; datos
     ).pickup_code,
     undefined,
   );
+  await call(
+    "post",
+    `/operations/trips/${f.trip.id}/accept`,
+    f.driverUser,
+    {},
+  ).expect(200);
   await call("patch", `/trips/${f.trip.id}/status`, f.driverUser, {
     status: "boarding",
   }).expect(200);

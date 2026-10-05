@@ -17,9 +17,9 @@ const guides = {
     "Al llegar la unidad, entrega los paquetes con el código del cliente. Cierra caja y revisa el corte.",
   ],
   driver: [
-    "En Operación, los conductores de unidad ven sus salidas y listas de pasajeros.",
-    "Inicia abordaje, valida boletos, carga paquetes, sal a ruta y registra llegada.",
-    "Gabriel y Lucía eligen su auto, aceptan solicitudes de Viaje Rápido y completan el traslado.",
+    "En /conductores, abre Mis salidas para ver tus rutas y listas de pasajeros.",
+    "Acepta la salida asignada, inicia abordaje, valida boletos, carga paquetes, inicia viaje y registra llegada.",
+    "Los taxistas y Uber ven Taxi / Uber: solicitudes de su ciudad, traslados aceptados e historial.",
   ],
   customer: [
     "Elige una salida DEMO, captura los nombres y extras, y confirma el pago simulado.",

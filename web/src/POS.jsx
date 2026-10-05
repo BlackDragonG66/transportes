@@ -1,7 +1,9 @@
 import { useEffect, useState } from "react";
 import { api, money, date } from "./api.js";
 import ReservationForm from "./ReservationForm.jsx";
-export default function POS({ user }) {
+import StaffConfirm from "./StaffConfirm.jsx";
+export default function POS({ user, view = "all", onNavigate }) {
+  const [closing, setClosing] = useState(null);
   const [data, setData] = useState(null),
     [register, setRegister] = useState(""),
     [opening, setOpening] = useState("0"),
@@ -24,12 +26,28 @@ export default function POS({ user }) {
   const active = data?.sessions.find(
     (s) => !s.closed_at && s.cashier_id === user.id,
   );
+  useEffect(() => {
+    if (view !== "reportes" || !data?.sessions.length) return;
+    const session = active || data.sessions[0];
+    let mounted = true;
+    api(`/cash/${session.id}/report`)
+      .then((r) => {
+        if (mounted) setReport(r);
+      })
+      .catch((e) => {
+        if (mounted) setError(e.message);
+      });
+    return () => {
+      mounted = false;
+    };
+  }, [view, data]);
   async function action(path, body) {
     setBusy(true);
     setError("");
     try {
       const r = await api(path, { method: "POST", body });
       if (path.includes("close")) setReport(r);
+      setClosing(null);
       await load();
     } catch (e) {
       setError(e.message);
@@ -40,7 +58,24 @@ export default function POS({ user }) {
   if (!data) return <p>Cargando taquilla… {error}</p>;
   return (
     <>
-      <h1 className="title">Taquilla</h1>
+      <h2 className="title is-4">
+        {{
+          caja: "Mi caja y turno",
+          ventas: "Venta en taquilla",
+          reportes: "Reportes y cortes",
+        }[view] || "Taquilla"}
+      </h2>
+      {view === "ventas" && !active && (
+        <div className="notification is-warning">
+          Abre tu caja antes de vender boletos.{" "}
+          <button
+            className="button is-small ml-3"
+            onClick={() => onNavigate?.("caja")}
+          >
+            Ir a mi caja
+          </button>
+        </div>
+      )}
       {activation && (
         <p className="notification is-info is-light">
           Cliente DEMO registrado.{" "}
@@ -48,99 +83,112 @@ export default function POS({ user }) {
         </p>
       )}
       {error && <p className="notification is-danger is-light">{error}</p>}
-      <div className="box">
-        {!active ? (
-          <form
-            className="cash-controls"
-            onSubmit={(e) => {
-              e.preventDefault();
-              action("/cash/open", {
-                registerId: register,
-                openingCents: Math.round(Number(opening) * 100),
-              });
-            }}
-          >
-            <label>
-              Caja
-              <div className="select">
-                <select
-                  required
-                  value={register}
-                  onChange={(e) => setRegister(e.target.value)}
-                >
-                  <option value="">Selecciona caja</option>
-                  {data.registers.map((r) => (
-                    <option key={r.id} value={r.id}>
-                      {r.name}
-                    </option>
-                  ))}
-                </select>
-              </div>
-            </label>
-            <label>
-              Fondo inicial MXN
-              <input
-                className="input"
-                type="number"
-                min="0"
-                step="0.01"
-                required
-                value={opening}
-                onChange={(e) => setOpening(e.target.value)}
-              />
-            </label>
-            <button disabled={busy} className="button is-primary">
-              Abrir caja
-            </button>
-          </form>
-        ) : (
-          <>
-            <p>
-              Caja abierta desde {date(active.opened_at)} · Fondo{" "}
-              {money(active.opening_cents)}
-            </p>
+      {(view === "all" || view === "caja") && (
+        <div className="box">
+          {!active ? (
             <form
-              className="cash-controls mt-3"
+              className="cash-controls"
               onSubmit={(e) => {
                 e.preventDefault();
-                action(`/cash/${active.id}/close`, {
-                  countedCents: Math.round(Number(counted) * 100),
+                action("/cash/open", {
+                  registerId: register,
+                  openingCents: Math.round(Number(opening) * 100),
                 });
               }}
             >
               <label>
-                Efectivo contado MXN
+                Caja
+                <div className="select">
+                  <select
+                    required
+                    value={register}
+                    onChange={(e) => setRegister(e.target.value)}
+                  >
+                    <option value="">Selecciona caja</option>
+                    {data.registers.map((r) => (
+                      <option key={r.id} value={r.id}>
+                        {r.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </label>
+              <label>
+                Fondo inicial MXN
                 <input
-                  required
                   className="input"
                   type="number"
                   min="0"
                   step="0.01"
-                  value={counted}
-                  onChange={(e) => setCounted(e.target.value)}
+                  required
+                  value={opening}
+                  onChange={(e) => setOpening(e.target.value)}
                 />
               </label>
-              <button disabled={busy} className="button is-warning">
-                Cerrar caja y generar corte
+              <button disabled={busy} className="button is-primary">
+                Abrir caja
               </button>
-              <button
-                type="button"
-                className="button"
-                onClick={async () => {
+            </form>
+          ) : (
+            <>
+              <p>
+                Caja abierta desde {date(active.opened_at)} · Fondo{" "}
+                {money(active.opening_cents)}
+              </p>
+              <form
+                className="cash-controls mt-3"
+                onSubmit={async (e) => {
+                  e.preventDefault();
+                  setBusy(true);
                   try {
-                    setReport(await api(`/cash/${active.id}/report`));
+                    const r = await api(`/cash/${active.id}/report`);
+                    setClosing({
+                      sessionId: active.id,
+                      counted: Math.round(Number(counted) * 100),
+                      expected: r.opening_cents + r.sales_cents,
+                    });
                   } catch (e) {
                     setError(e.message);
+                  } finally {
+                    setBusy(false);
                   }
                 }}
               >
-                Consultar ventas y esperado
-              </button>
-            </form>
-          </>
-        )}
-      </div>
-      {active && (
+                <label>
+                  Efectivo contado MXN
+                  <input
+                    required
+                    className="input"
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    value={counted}
+                    onChange={(e) => setCounted(e.target.value)}
+                  />
+                </label>
+                <button disabled={busy} className="button is-warning">
+                  Revisar cierre de caja
+                </button>
+                <button
+                  type="button"
+                  className="button"
+                  onClick={async () => {
+                    try {
+                      setReport(await api(`/cash/${active.id}/report`));
+                      onNavigate?.("reportes");
+                    } catch (e) {
+                      setError(e.message);
+                    }
+                  }}
+                >
+                  Consultar ventas y esperado
+                </button>
+              </form>
+            </>
+          )}
+        </div>
+      )}
+      {active && (view === "all" || view === "ventas") && (
         <>
           <form
             className="box cash-controls"
@@ -194,7 +242,7 @@ export default function POS({ user }) {
           />
         </>
       )}
-      {report && (
+      {report && (view === "all" || view === "reportes") && (
         <div className="box">
           <h2 className="title is-4">
             {report.closed_at ? "Corte de turno" : "Reporte de caja abierta"}
@@ -240,25 +288,57 @@ export default function POS({ user }) {
           )}
         </div>
       )}
-      <h2 className="title is-5">Turnos recientes</h2>
-      {data.sessions.map((s) => (
-        <p className="mb-2" key={s.id}>
-          {s.cashier_name} · {s.register_name} · {date(s.opened_at)} ·{" "}
-          {s.closed_at ? "Cerrado" : "Abierto"}{" "}
-          <button
-            className="button is-small"
-            onClick={async () => {
-              try {
-                setReport(await api(`/cash/${s.id}/report`));
-              } catch (e) {
-                setError(e.message);
-              }
-            }}
-          >
-            Ver reporte
-          </button>
-        </p>
-      ))}
+      {(view === "all" || view === "reportes") && (
+        <>
+          <h2 className="title is-5">Turnos recientes</h2>
+          {data.sessions.map((s) => (
+            <p className="mb-2" key={s.id}>
+              {s.cashier_name} · {s.register_name} · {date(s.opened_at)} ·{" "}
+              {s.closed_at ? "Cerrado" : "Abierto"}{" "}
+              <button
+                className="button is-small"
+                onClick={async () => {
+                  try {
+                    setReport(await api(`/cash/${s.id}/report`));
+                  } catch (e) {
+                    setError(e.message);
+                  }
+                }}
+              >
+                Ver reporte
+              </button>
+            </p>
+          ))}
+          {!data.sessions.length && <p>No hay turnos registrados todavía.</p>}
+        </>
+      )}
+      {closing && (
+        <StaffConfirm
+          title="Cerrar caja y generar corte"
+          busy={busy}
+          onCancel={() => setClosing(null)}
+          onConfirm={() =>
+            action(`/cash/${closing.sessionId}/close`, {
+              countedCents: closing.counted,
+            })
+          }
+        >
+          <p>
+            Esperado: <strong>{money(closing.expected)}</strong>
+          </p>
+          <p>
+            Efectivo contado: <strong>{money(closing.counted)}</strong>
+          </p>
+          <p>
+            Diferencia:{" "}
+            <strong>{money(closing.counted - closing.expected)}</strong>
+          </p>
+          <p className="mt-3">
+            Confirma el conteo para cerrar tu turno y guardar el corte.
+          </p>
+          {error && <p className="help is-danger">{error}</p>}
+        </StaffConfirm>
+      )}
     </>
   );
 }
