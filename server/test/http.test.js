@@ -1,0 +1,74 @@
+import {test,before,after} from 'node:test';
+import assert from 'node:assert/strict';
+import {readFile} from 'node:fs/promises';
+import {randomUUID} from 'node:crypto';
+import request from 'supertest';
+import {PGlite} from '@electric-sql/pglite';
+import {app} from '../src/app.js';
+import {pool} from '../src/db.js';
+import {config} from '../src/config.js';
+let engine;
+const origin='http://localhost:5173';
+before(async()=>{
+ config.secret='integration-tests-secret-at-least-32-chars';config.appUrl=origin;
+ engine=new PGlite();await engine.exec(await readFile(new URL('../../database/schema.sql',import.meta.url),'utf8'));
+ pool.query=(...args)=>engine.query(...args);
+ let queue=Promise.resolve();pool.connect=async()=>{const prev=queue;let release;queue=new Promise(r=>release=r);await prev;return {query:(...args)=>engine.query(...args),release};};
+});
+after(async()=>{await engine.close();await pool.end();});
+test('HTTP rechaza origen ajeno, protege POS y valida JSON',async()=>{
+ await request(app).post('/api/auth/register').set('Origin','https://evil.example').send({}).expect(403);
+ await request(app).get('/api/cash').expect(401);
+ await request(app).post('/api/auth/register').set('Origin',origin).send({email:'x',password:'short'}).expect(400);
+ await request(app).post('/api/auth/login').set('Origin',origin).set('Content-Type','application/json').send('{').expect(400);
+ await request(app).get('/api/missing').expect(404);
+});
+test('registro, sesión, cliente sin privilegios y cierre de sesión',async()=>{
+ const client=request.agent(app),email=`${randomUUID()}@example.com`;
+ const registration=await client.post('/api/auth/register').set('Origin',origin).send({name:'Cliente Prueba',email,phone:'4431234567',password:'password-long-enough'}).expect(201);
+ assert.equal(registration.body.role,'customer');assert(!registration.body.password_hash);
+ await client.get('/api/auth/me').expect(200);
+ await client.get('/api/admin/resources').expect(403);await client.get('/api/cash').expect(403);
+ await client.post('/api/auth/logout').set('Origin',origin).expect(204);await client.get('/api/auth/me').expect(401);
+ await client.post('/api/auth/login').set('Origin',origin).send({email,password:'password-long-enough'}).expect(200);
+ await client.post('/api/push/subscribe').set('Origin',origin).send({endpoint:'https://127.0.0.1/private',keys:{p256dh:'x'.repeat(60),auth:'x'.repeat(22)}}).expect(400);
+});
+test('webhook sin firma no modifica datos',async()=>{
+ await request(app).post('/api/payments/webhook?data.id=123').send({}).expect(401);
+ assert.equal((await engine.query('SELECT count(*)::int AS n FROM payments')).rows[0].n,0);
+});
+test('recuperación genera enlace de un uso y contraseña nueva',async()=>{
+ const client=request.agent(app),email=`${randomUUID()}@example.com`;
+ await client.post('/api/auth/register').set('Origin',origin).send({name:'Recuperación',email,phone:'4431234567',password:'old-password-long'}).expect(201);
+ await client.post('/api/auth/recover').set('Origin',origin).send({email}).expect(200);
+ const outbox=(await engine.query("SELECT url FROM notification_outbox WHERE title='Acceso a ConexionES' ORDER BY created_at DESC LIMIT 1")).rows[0];
+ const token=outbox.url.split('/').at(-1);
+ await client.post('/api/auth/activate').set('Origin',origin).send({token,password:'new-password-long'}).expect(200);
+ await client.post('/api/auth/activate').set('Origin',origin).send({token,password:'other-password-long'}).expect(400);
+ await client.post('/api/auth/logout').set('Origin',origin).expect(204);
+ await client.post('/api/auth/login').set('Origin',origin).send({email,password:'old-password-long'}).expect(401);
+ await client.post('/api/auth/login').set('Origin',origin).send({email,password:'new-password-long'}).expect(200);
+});
+test('flujo HTTP catálogo, reserva, boleto privado y tracking público sin datos del cliente',async()=>{
+ const client=request.agent(app),email=`${randomUUID()}@example.com`;
+ const user=(await client.post('/api/auth/register').set('Origin',origin).send({name:'Pasajero QR',email,phone:'4431234567',password:'password-for-qr-test'}).expect(201)).body;
+ const run=async(sql,params=[])=>(await engine.query(sql,params)).rows[0];
+ const driverUser=await run("INSERT INTO users(name,email,phone,password_hash,role) VALUES('Chofer QR',$1,'4431234567','hash','driver') RETURNING id",[`${randomUUID()}@example.com`]);
+ const driver=await run("INSERT INTO drivers(user_id,photo_url,license) VALUES($1,'https://example.com/driver.jpg','LICENSE') RETURNING id",[driverUser.id]);
+ const vehicle=await run("INSERT INTO vehicles(brand,model,plate,capacity) VALUES('Mercedes-Benz','Sprinter',$1,16) RETURNING *",[randomUUID()]);
+ const route=await run("INSERT INTO routes(origin,destination,kind) VALUES('Apatzingán','Morelia','interurban') RETURNING id");
+ const type=await run("INSERT INTO passenger_types(name) VALUES('Adulto') RETURNING id");
+ await run('INSERT INTO fares VALUES($1,$2,25000)',[route.id,type.id]);
+ const trip=await run("INSERT INTO trips(route_id,vehicle_id,driver_id,departure_at,arrival_at,capacity) VALUES($1,$2,$3,now()+interval '1 day',now()+interval '1 day 3 hours',16) RETURNING id",[route.id,vehicle.id,driver.id]);
+ const catalog=await client.get('/api/catalog').expect(200);assert.equal(catalog.body.trips[0].available,16);
+ const booking=(await client.post('/api/bookings').set('Origin',origin).set('Idempotency-Key',randomUUID()).send({tripId:trip.id,passengers:[{id:type.id,quantity:3}]}).expect(201)).body;
+ assert.equal(booking.total_cents,78000);assert.equal(booking.user_id,user.id);
+ const ticket=await client.get(`/api/ticket/${booking.ticket_token}`).expect(200);assert(ticket.body.qr.startsWith('data:image/png;base64,'));assert.equal(ticket.body.trip.plate,vehicle.plate);
+ await request(app).get(`/api/ticket/${booking.ticket_token}`).expect(401);
+ const outsider=request.agent(app);await outsider.post('/api/auth/register').set('Origin',origin).send({name:'Otro cliente',email:`${randomUUID()}@example.com`,phone:'4431234567',password:'another-long-password'}).expect(201);
+ await outsider.get(`/api/ticket/${booking.ticket_token}`).expect(404);
+ const tracking=await request(app).get(`/api/tracking/${booking.share_token}`).expect(200);
+ assert(!tracking.body.email&&!tracking.body.user_id&&!tracking.body.ticket_token&&!tracking.body.phone);
+ await request(app).get(`/api/vehicle/${vehicle.public_token}`).expect(404);
+ await run("UPDATE trips SET status='boarding' WHERE id=$1",[trip.id]);await request(app).get(`/api/vehicle/${vehicle.public_token}`).expect(200);
+});

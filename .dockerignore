@@ -1,0 +1,9 @@
+.git
+node_modules
+**/node_modules
+web/dist
+.env
+*.log
+artifacts
+.test-postgres
+server/test

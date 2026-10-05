@@ -1,0 +1,7 @@
+{
+  "name": "conexiones", "private": true, "type": "module",
+  "workspaces": ["server", "web"],
+  "engines": {"node": ">=24"},
+  "scripts": {"dev": "concurrently \"npm run dev -w server\" \"npm run dev -w web\"", "build": "npm run build -w web", "start": "npm start -w server", "test": "npm test -w server", "test:postgres": "node scripts/test-postgres.mjs", "bundle": "node scripts/bundle.mjs", "db:migrate": "npm run migrate -w server", "user:create": "npm run user:create -w server"},
+  "devDependencies": {"concurrently": "^9.2.1"}
+}
