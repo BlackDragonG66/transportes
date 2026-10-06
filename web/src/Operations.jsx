@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { api, date } from "./api.js";
 import { parcelLabels } from "./Parcels.jsx";
 import StaffConfirm from "./StaffConfirm.jsx";
+import TripProgress from "./TripProgress.jsx";
 const labels = {
   scheduled: "Programada",
   boarding: "En abordaje",
@@ -33,9 +34,10 @@ export default function UnitOperations({ user }) {
     const request = ++generation.current;
     try {
       const rows = await api("/operations/trips");
-      const m = selected
-        ? await api(`/operations/trips/${selected}/manifest`)
-        : null;
+      const m =
+        selected && user.role === "admin"
+          ? await api(`/operations/trips/${selected}/manifest`)
+          : null;
       if (request !== generation.current) return;
       setTrips(rows);
       setManifest(m);
@@ -83,18 +85,12 @@ export default function UnitOperations({ user }) {
       manifest?.bookings.reduce((sum, b) => sum + b.passengers, 0) || 0;
   const next =
     trip?.status === "scheduled"
-      ? trip.accepted_at
-        ? {
-            label: "Iniciar abordaje",
-            status: "boarding",
-            description:
-              "Abre la validación de boletos y prepara la carga de esta salida.",
-          }
-        : {
-            label: "Aceptar salida asignada",
-            description:
-              "Confirma que recibirás esta salida con la unidad indicada.",
-          }
+      ? {
+          label: "Iniciar abordaje",
+          status: "boarding",
+          description:
+            "Abre la validación de boletos y prepara la carga de esta salida.",
+        }
       : trip?.status === "boarding"
         ? {
             label: "Iniciar viaje",
@@ -116,9 +112,7 @@ export default function UnitOperations({ user }) {
         ? 3
         : trip?.status === "boarding"
           ? 2
-          : trip?.accepted_at
-            ? 1
-            : 0;
+          : 0;
   return (
     <section>
       <div className="staff-panel-heading">
@@ -129,8 +123,8 @@ export default function UnitOperations({ user }) {
               : "Mis salidas asignadas"}
           </h2>
           <p className="muted">
-            La administración asigna ruta, unidad y horario. Acepta tu salida
-            para comenzar la operación.
+            La administración asigna ruta, unidad y horario, y registra cada
+            etapa de la operación. El conductor consulta sus salidas.
           </p>
         </div>
         <button className="button is-light" disabled={busy} onClick={load}>
@@ -140,12 +134,9 @@ export default function UnitOperations({ user }) {
       <div className="staff-metrics">
         <div>
           <strong>
-            {
-              trips.filter((t) => t.status === "scheduled" && !t.accepted_at)
-                .length
-            }
+            {trips.filter((t) => t.status === "scheduled").length}
           </strong>
-          <span>Por aceptar</span>
+          <span>Programadas</span>
         </div>
         <div>
           <strong>
@@ -230,11 +221,6 @@ export default function UnitOperations({ user }) {
                   <div>
                     <div className="staff-status">
                       <span className="tag is-light">{labels[t.status]}</span>
-                      {t.accepted_at && (
-                        <span className="tag is-success is-light">
-                          Salida aceptada
-                        </span>
-                      )}
                     </div>
                     <strong>
                       {t.origin} → {t.destination}
@@ -256,7 +242,9 @@ export default function UnitOperations({ user }) {
                       }
                     }}
                   >
-                    Ver salida y operar
+                    {user.role === "admin"
+                      ? "Ver salida y operar"
+                      : "Ver mi salida"}
                   </button>
                 </article>
               ))}
@@ -266,8 +254,9 @@ export default function UnitOperations({ user }) {
               <div className="box">
                 <h2 className="title is-5">Elige una salida</h2>
                 <p>
-                  Abre una salida para aceptar la asignación, ver pasajeros y
-                  carga, y avanzar cada etapa.
+                  {user.role === "admin"
+                    ? "Abre una salida para validar pasajeros, registrar carga y avanzar cada etapa."
+                    : "Consulta tu ruta, horario y unidad asignada."}
                 </p>
               </div>
             ) : (
@@ -279,24 +268,26 @@ export default function UnitOperations({ user }) {
                   {date(trip.departure_at)} · {trip.brand} {trip.model} ·{" "}
                   {trip.plate}
                 </p>
-                <ol className="staff-progress" aria-label="Etapas del viaje">
-                  {[
-                    "Aceptar salida",
-                    "Iniciar abordaje",
-                    "Pasajeros y carga",
-                    "Iniciar viaje",
-                    "Llegada",
-                  ].map((name, i) => (
-                    <li
-                      className={step === i ? "current" : ""}
-                      aria-current={step === i ? "step" : undefined}
-                      key={name}
-                    >
-                      {i + 1}. {name}
-                    </li>
-                  ))}
-                </ol>
-                {next ? (
+                {user.role === "admin" && (
+                  <ol className="staff-progress" aria-label="Etapas del viaje">
+                    {[
+                      "Salida asignada",
+                      "Iniciar abordaje",
+                      "Pasajeros y carga",
+                      "Iniciar viaje",
+                      "Llegada",
+                    ].map((name, i) => (
+                      <li
+                        className={step === i ? "current" : ""}
+                        aria-current={step === i ? "step" : undefined}
+                        key={name}
+                      >
+                        {i + 1}. {name}
+                      </li>
+                    ))}
+                  </ol>
+                )}
+                {next && user.role === "admin" ? (
                   <div className="staff-primary-action">
                     <p>{next.description}</p>
                     <button
@@ -305,11 +296,9 @@ export default function UnitOperations({ user }) {
                       onClick={() =>
                         setConfirm({
                           title: next.label,
-                          path: next.status
-                            ? `/trips/${trip.id}/status`
-                            : `/operations/trips/${trip.id}/accept`,
-                          method: next.status ? "PATCH" : "POST",
-                          body: next.status ? { status: next.status } : {},
+                          path: `/trips/${trip.id}/status`,
+                          method: "PATCH",
+                          body: { status: next.status },
                           description: next.description,
                         })
                       }
@@ -317,14 +306,28 @@ export default function UnitOperations({ user }) {
                       {next.label}
                     </button>
                   </div>
-                ) : (
+                ) : trip.status === "arrived" ? (
                   <p className="notification is-success is-light">
-                    Viaje finalizado. Puedes consultar su lista y carga en el
-                    historial.
+                    {user.role === "admin"
+                      ? "Viaje finalizado. Puedes consultar su lista y carga en el historial."
+                      : "Administración registró la llegada. Viaje finalizado."}
                   </p>
+                ) : null}
+                {user.role !== "admin" && (
+                  <>
+                    <TripProgress status={trip.status} />
+                    <p>Llegada estimada: {date(trip.arrival_at)}</p>
+                    <p className="notification is-light mt-4">
+                      Salida asignada por administración. Consulta las placas y
+                      los datos de tu unidad en{" "}
+                      <a href="#unidad">Mi unidad y QR</a>.
+                    </p>
+                  </>
                 )}
                 {!manifest ? (
-                  <p role="status">Cargando pasajeros y carga…</p>
+                  user.role === "admin" ? (
+                    <p role="status">Cargando pasajeros y carga…</p>
+                  ) : null
                 ) : (
                   <>
                     <h3 className="title is-5">
@@ -484,7 +487,9 @@ export function LocalOperations({ user }) {
           j.passengers <= car.capacity &&
           j.luggage <= car.luggage_capacity),
     ),
-    active = jobs.some((j) => j.status === "accepted" && j.fleet_id === fleet);
+    active = jobs.some(
+      (j) => j.status === "accepted" && j.started_at && j.owned,
+    );
   return (
     <section>
       <div className="staff-panel-heading">
@@ -497,7 +502,7 @@ export function LocalOperations({ user }) {
           <p className="muted">
             {user.role === "admin"
               ? "Consulta solicitudes y asignaciones en ambas ciudades. Cada chofer opera con su propio acceso."
-              : "Recibe solicitudes de tu ciudad. Puedes aceptar un traslado por llegada de unidad, incluso si ya lo completaste."}
+              : "Organiza tu agenda: puedes aceptar llegadas a distintas horas. Solo un traslado por hora de llegada, aunque lleguen dos unidades a la vez."}
           </p>
         </div>
         <button className="button is-light" onClick={load} disabled={busy}>
@@ -530,8 +535,8 @@ export function LocalOperations({ user }) {
           )}
           {active && (
             <p className="notification is-info is-light mt-3">
-              Tienes un traslado aceptado con este auto. Complétalo antes de
-              tomar otro.
+              Tienes un traslado en curso. Puedes aceptar futuras llegadas;
+              finaliza el traslado actual antes de iniciar el siguiente.
             </p>
           )}
         </div>
@@ -584,7 +589,9 @@ export function LocalOperations({ user }) {
               <div className="staff-status">
                 <span className="tag is-light">{j.service_city}</span>
                 <span className="tag is-primary is-light">
-                  {labels[j.status]}
+                  {j.status === "accepted" && j.started_at
+                    ? "En viaje"
+                    : labels[j.status]}
                 </span>
               </div>
               <h3>{j.zone}</h3>
@@ -610,20 +617,32 @@ export function LocalOperations({ user }) {
               {j.status === "waiting" && ownFleet.length > 0 && (
                 <button
                   className="button is-primary"
-                  disabled={busy || !car || active}
+                  disabled={busy || !car}
                   onClick={() => setConfirm({ job: j, action: "accept" })}
                 >
                   Aceptar traslado
                 </button>
               )}
               {j.status === "accepted" && j.owned && (
-                <button
-                  className="button is-primary"
-                  disabled={busy}
-                  onClick={() => setConfirm({ job: j, action: "complete" })}
-                >
-                  Completar traslado
-                </button>
+                <>
+                  <TripProgress
+                    title="Estado del traslado"
+                    status={j.status}
+                    started={j.started_at}
+                  />
+                  <button
+                    className="button is-primary"
+                    disabled={busy || (!j.started_at && active)}
+                    onClick={() =>
+                      setConfirm({
+                        job: j,
+                        action: j.started_at ? "complete" : "start",
+                      })
+                    }
+                  >
+                    {j.started_at ? "Completar traslado" : "Iniciar traslado"}
+                  </button>
+                </>
               )}
             </article>
           ))}
@@ -644,7 +663,9 @@ export function LocalOperations({ user }) {
           title={
             confirm.action === "accept"
               ? "Aceptar traslado"
-              : "Completar traslado"
+              : confirm.action === "start"
+                ? "Iniciar traslado"
+                : "Completar traslado"
           }
           busy={busy}
           onCancel={() => setConfirm(null)}
@@ -659,8 +680,10 @@ export function LocalOperations({ user }) {
           <p>Llegada: {date(confirm.job.arrival_at)}</p>
           <p className="mt-3">
             {confirm.action === "accept"
-              ? `Atenderás esta solicitud con ${car?.model}, placas ${car?.plate}. Esta llegada quedará asignada a ti para un único traslado.`
-              : "Confirma que entregaste a los pasajeros en su destino. No podrás tomar otra solicitud de esta misma llegada."}
+              ? `Atenderás esta solicitud con ${car?.model}, placas ${car?.plate}. No podrás aceptar otra llegada a esta misma hora; sí podrás aceptar horarios diferentes.`
+              : confirm.action === "start"
+                ? "Confirma que los pasajeros ya están a bordo para comenzar el traslado. El enlace compartido mostrará que van en viaje."
+                : "Confirma que entregaste a los pasajeros en su destino. El cliente podrá calificar su experiencia desde el boleto."}
           </p>
           {error && <p className="help is-danger">{error}</p>}
         </StaffConfirm>

@@ -17,8 +17,8 @@ const guides = {
     "Al llegar la unidad, entrega los paquetes con el código del cliente. Cierra caja y revisa el corte.",
   ],
   driver: [
-    "En /conductores, abre Mis salidas para ver tus rutas y listas de pasajeros.",
-    "Acepta la salida asignada, inicia abordaje, valida boletos, carga paquetes, inicia viaje y registra llegada.",
+    "En /conductores, abre Mis salidas para consultar tus rutas, horarios y unidades asignadas.",
+    "Administración registra el abordaje, la carga, la salida y la llegada de las unidades interurbanas. Consulta tu ficha y QR en Mi unidad y QR.",
     "Los taxistas y Uber ven Taxi / Uber: solicitudes de su ciudad, traslados aceptados e historial.",
   ],
   customer: [

@@ -198,6 +198,10 @@ export async function reconcilePayment(payment, db = pool) {
         b.id,
       ]);
       await c.query(
+        "DELETE a FROM local_driver_activity a JOIN local_jobs j ON j.id=a.job_id JOIN last_mile_requests r ON r.id=j.request_id WHERE r.booking_id=$1",
+        [b.id],
+      );
+      await c.query(
         "UPDATE local_jobs SET status='cancelled' WHERE request_id IN (SELECT id FROM last_mile_requests WHERE booking_id=$1)",
         [b.id],
       );

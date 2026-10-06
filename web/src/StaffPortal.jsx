@@ -4,6 +4,7 @@ import { Auth } from "./Auth.jsx";
 import Account from "./Account.jsx";
 import POS from "./POS.jsx";
 import UnitOperations, { LocalOperations } from "./Operations.jsx";
+import StaffVehicles from "./StaffVehicles.jsx";
 import Parcels from "./Parcels.jsx";
 import Admin from "./Admin.jsx";
 import { Notices } from "./Demo.jsx";
@@ -201,6 +202,7 @@ export default function StaffPortal({ area }) {
               <UnitOperations user={user} />
             )}
             {profile && current === "taxi" && <LocalOperations user={user} />}
+            {profile && current === "unidad" && <StaffVehicles user={user} />}
             {profile && ["caja", "ventas", "reportes"].includes(current) && (
               <POS user={user} view={current} onNavigate={go} />
             )}

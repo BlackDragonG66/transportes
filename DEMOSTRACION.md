@@ -35,7 +35,7 @@ El portal detecta las asignaciones del conductor: Carlos y los demás operadores
 4. **Uber / taxi:** Gabriel entra a `/conductores` → **Taxi / Uber**. Su Accent se selecciona automáticamente. En **Solicitudes disponibles** revisa colonia, llegada, pasajeros y maletas y pulsa **Aceptar traslado**. Solo después de aceptarla obtiene el nombre y teléfono del cliente. El traslado aparece en **Mis traslados aceptados**, desde donde puede completarlo; después queda en **Historial de traslados**. Lucía puede tomar el segundo auto. Gabriel y Lucía atienden Morelia; Roberto y Diana atienden Apatzingán. Un chofer solo puede aceptar un traslado por llegada de unidad, incluso si ya lo completó o cambia de auto. Podrá aceptar de otra llegada. El administrador puede consultar todas las asignaciones.
 
 En `/cajeros`, **Mi caja** abre y cierra el turno; **Vender boleto** registra clientes y reservas sin comisión web; **Paquetería** recibe y entrega envíos; **Reportes y cortes** muestra ventas y efectivo esperado. Antes de cerrar se revisan efectivo contado y diferencia. Un cajero no puede operar la caja de otro.
-5. **Paquetería:** Ana solicita el envío y conserva su código privado de seis dígitos. Puede simular recepción y pago desde su perfil, o Esmeralda puede recibirlo y cobrarlo en caja. Carlos lo carga durante el abordaje. Después de llegar, taquilla verifica el código y registra la entrega. El enlace público muestra únicamente ruta, estados y tiempos.
+5. **Paquetería:** Ana solicita el envío y conserva su código privado de seis dígitos. Puede simular recepción y pago desde su perfil, o Esmeralda puede recibirlo y cobrarlo en caja. Administración registra su carga durante el abordaje. Después de llegar, taquilla verifica el código y registra la entrega. El enlace público muestra únicamente ruta, estados y tiempos.
 6. **Administrador:** Jonathan puede configurar página, publicidad, tarifas, equipo y programación. **Programar salidas** pregunta ruta, unidad, conductor, fechas, días, horarios, duración, lugares y capacidad de carga. Presenta una revisión previa y crea el lote completo con una transacción; ante un conflicto no crea ninguna salida.
 
 ## Horarios de ejemplo, Ciudad de México
@@ -47,7 +47,19 @@ En `/cajeros`, **Mi caja** abre y cierra el turno; **Vender boleto** registra cl
 
 La demostración permite recorrer estados sin esperar al horario real. Los permisos de conductor, códigos e inventario siguen validándose.
 
-Las llegadas a Aeropuerto de Morelia, CREE Morelia y Teletón Morelia pertenecen a la cobertura de Morelia. La ciudad de un auto se elige al registrarlo. No se aceptan coincidencias parciales de texto para asignar ciudad. La restricción por llegada se registra en `local_arrival_assignments`, con una clave única por salida interurbana y chofer; se conserva después de completar el traslado.
+Las llegadas a Aeropuerto de Morelia, CREE Morelia y Teletón Morelia pertenecen a la cobertura de Morelia. La ciudad de un auto se elige al registrarlo. No se aceptan coincidencias parciales de texto para asignar ciudad. El chofer puede aceptar con anticipación las llegadas de las 10:00 y 11:00; dos unidades que lleguen a las 11:00 cuentan como el mismo horario y solo puede aceptar un traslado. `local_arrival_slots` reserva ese minuto de llegada por chofer, incluso después de completar el traslado, y `local_arrival_assignments` conserva la restricción por salida. **Iniciar traslado** registra cuándo comienza y **Completar traslado** libera al chofer para iniciar el siguiente. Puede tener varias reservas aceptadas, pero solo un traslado en curso.
+
+## Mi unidad y QR
+
+En `/conductores#unidad`, cada taxista puede consultar y editar marca, modelo, año, color, servicio Taxi/Uber, placas, lugares y maletas de sus autos. La ciudad, activación y conductor asignado se administran centralmente. No puede editar vehículos de otro chofer ni cambiar la identidad o capacidad de un auto mientras tenga traslados aceptados. Los cambios conservan el token QR y quedan auditados. Los conductores interurbanos consultan su unidad y descargan su QR; los datos operativos siguen bajo administración.
+
+**Ver como pasajero**, **Descargar QR** e **Imprimir ficha con QR** permiten preparar el distintivo del auto. `/taxi/:token` muestra foto y nombre del conductor, modelo, año, color, placas, ciudad y promedio de calificaciones. No muestra teléfonos, licencia, correo, pasajeros ni ubicaciones de solicitudes. Una unidad o conductor inactivo deja de estar disponible en ese enlace.
+
+## Progreso y calificaciones
+
+El boleto y su enlace **Compartir mi viaje** muestran **Todavía no inicia → En viaje → Viaje completado**, usando el estado registrado por el conductor; no es seguimiento GPS. El traslado local tiene su propia barra, actualizada al iniciar y completar el servicio. El enlace público no incluye nombres ni contactos de pasajeros.
+
+El propietario del boleto confirmado puede calificar de una a cinco estrellas y dejar un comentario de hasta 500 caracteres después de completar cada tramo: interurbano y Taxi/Uber. Puede actualizar su calificación sin duplicarla. Los visitantes del enlace compartido entran a su propio boleto para calificar; conductores y otros clientes no pueden calificar un boleto ajeno. Los comentarios permanecen privados; el QR muestra únicamente el promedio y cantidad de calificaciones del taxista.
 
 ## Paquetería
 

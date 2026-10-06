@@ -236,3 +236,44 @@ INSERT IGNORE INTO trip_driver_acceptances(trip_id,driver_id,accepted_by)
 SELECT t.id,t.driver_id,d.user_id FROM trips t JOIN drivers d ON d.id=t.driver_id
 WHERE t.status IN ('boarding','en_route','arrived');
 INSERT IGNORE INTO schema_migrations(version) VALUES(5);
+
+-- Separate details preserve existing local_fleet rows and printable QR identities.
+CREATE TABLE IF NOT EXISTS local_vehicle_profiles (
+ fleet_id CHAR(36) PRIMARY KEY, public_token CHAR(36) NOT NULL UNIQUE DEFAULT (UUID()),
+ brand VARCHAR(80), model VARCHAR(120), vehicle_year SMALLINT, color VARCHAR(40),
+ service_type ENUM('taxi','uber'), updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+ CHECK(vehicle_year IS NULL OR vehicle_year BETWEEN 1990 AND 2200),
+ FOREIGN KEY(fleet_id) REFERENCES local_fleet(id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+INSERT IGNORE INTO local_vehicle_profiles(fleet_id) SELECT id FROM local_fleet;
+INSERT IGNORE INTO schema_migrations(version) VALUES(6);
+
+-- Accepted rides form an agenda; only simultaneous arrivals and active driving conflict.
+SET @conexiones_fleet_index = IF(EXISTS(SELECT 1 FROM information_schema.statistics WHERE table_schema=DATABASE() AND table_name='local_jobs' AND index_name='active_fleet'),'ALTER TABLE local_jobs DROP INDEX active_fleet','DO 0');
+PREPARE conexiones_fleet_ddl FROM @conexiones_fleet_index;
+EXECUTE conexiones_fleet_ddl;
+DEALLOCATE PREPARE conexiones_fleet_ddl;
+CREATE TABLE IF NOT EXISTS local_arrival_slots (
+ driver_id CHAR(36) NOT NULL, arrival_at DATETIME NOT NULL, job_id CHAR(36) NOT NULL UNIQUE,
+ PRIMARY KEY(driver_id,arrival_at), FOREIGN KEY(driver_id) REFERENCES drivers(id), FOREIGN KEY(job_id) REFERENCES local_jobs(id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+INSERT IGNORE INTO local_arrival_slots(driver_id,arrival_at,job_id)
+SELECT a.driver_id,DATE_FORMAT(t.arrival_at,'%Y-%m-%d %H:%i:00'),MIN(a.job_id)
+FROM local_arrival_assignments a JOIN trips t ON t.id=a.trip_id GROUP BY a.driver_id,DATE_FORMAT(t.arrival_at,'%Y-%m-%d %H:%i:00');
+CREATE TABLE IF NOT EXISTS local_job_progress (
+ job_id CHAR(36) PRIMARY KEY, started_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3), completed_at DATETIME(3),
+ FOREIGN KEY(job_id) REFERENCES local_jobs(id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+CREATE TABLE IF NOT EXISTS local_driver_activity (
+ driver_id CHAR(36) PRIMARY KEY, job_id CHAR(36) NOT NULL UNIQUE,
+ FOREIGN KEY(driver_id) REFERENCES drivers(id), FOREIGN KEY(job_id) REFERENCES local_jobs(id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+CREATE TABLE IF NOT EXISTS trip_reviews (
+ id CHAR(36) PRIMARY KEY DEFAULT (UUID()), booking_id CHAR(36) NOT NULL, subject_key VARCHAR(40) NOT NULL,
+ segment ENUM('interurban','local') NOT NULL, job_id CHAR(36), driver_id CHAR(36) NOT NULL,
+ rating TINYINT NOT NULL CHECK(rating BETWEEN 1 AND 5), comment VARCHAR(500) NOT NULL DEFAULT '',
+ created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3), updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+ UNIQUE(booking_id,subject_key), FOREIGN KEY(booking_id) REFERENCES bookings(id), FOREIGN KEY(job_id) REFERENCES local_jobs(id), FOREIGN KEY(driver_id) REFERENCES drivers(id),
+ CHECK((segment='interurban' AND job_id IS NULL AND subject_key='interurban') OR (segment='local' AND job_id IS NOT NULL AND subject_key=job_id))
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+INSERT IGNORE INTO schema_migrations(version) VALUES(7);

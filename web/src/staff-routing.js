@@ -27,6 +27,9 @@ export function staffSections(area, capabilities) {
     ...(area === "drivers" && capabilities.local
       ? [["taxi", "Taxi / Uber"]]
       : []),
+    ...(area === "drivers" && (capabilities.local || capabilities.units)
+      ? [["unidad", "Mi unidad y QR"]]
+      : []),
     ...(area === "cash"
       ? [
           ["caja", "Mi caja"],

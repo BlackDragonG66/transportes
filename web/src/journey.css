@@ -1,0 +1,97 @@
+.trip-progress {
+  margin: 24px 0;
+}
+.trip-progress-heading {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+  font-size: 14px;
+}
+.trip-progress-heading h2 {
+  font-weight: 600;
+}
+.trip-progress .progress {
+  height: 9px;
+  margin-bottom: 16px;
+}
+.trip-progress ol {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  list-style: none;
+  padding: 0;
+}
+.trip-progress li {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  font-size: 12px;
+  color: #807287;
+}
+.trip-progress li.reached {
+  color: #612d88;
+  font-weight: 700;
+}
+.trip-progress li span {
+  flex: 0 0 22px;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: #eee7f4;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.trip-progress li.reached span {
+  background: #672e94;
+  color: white;
+}
+.trip-rating {
+  background: #fff;
+  border: 1px solid #e7dfed;
+  border-radius: 12px;
+  padding: 20px;
+  margin: 24px 0;
+}
+.trip-rating h3 {
+  font-size: 18px;
+  font-weight: 700;
+  margin-bottom: 12px;
+}
+.trip-rating-stars {
+  display: flex;
+  gap: 6px;
+  margin: 12px 0 20px;
+}
+.trip-rating-stars label {
+  position: relative;
+  color: #b9adbf;
+  font-size: 34px;
+  cursor: pointer;
+}
+.trip-rating-stars label.selected {
+  color: #e69821;
+}
+.trip-rating-stars input {
+  position: absolute;
+  opacity: 0;
+  width: 100%;
+  height: 100%;
+  cursor: pointer;
+}
+.trip-rating-stars label:focus-within {
+  outline: 2px solid #672e94;
+  outline-offset: 3px;
+  border-radius: 4px;
+}
+@media (max-width: 540px) {
+  .trip-progress li {
+    flex-direction: column;
+    font-size: 11px;
+  }
+  .trip-progress-heading {
+    flex-direction: column;
+  }
+}

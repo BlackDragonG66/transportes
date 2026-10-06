@@ -4,6 +4,8 @@ import { config } from "./config.js";
 import { isDemo } from "./demo.js";
 import { uuid, rapidInput, splitLocal } from "./domain.js";
 import { coversArrival } from "./local-cities.js";
+export const arrivalSlot = (value) =>
+  new Date(value).toISOString().slice(0, 16);
 export async function requestLastMile(actor, bookingId, raw, db = pool) {
   uuid.parse(bookingId);
   const v = rapidInput.parse(raw);
@@ -129,6 +131,23 @@ export async function acceptLocal(actor, jobId, fleetId, db = pool) {
       "INSERT INTO local_arrival_assignments(trip_id,driver_id,job_id) VALUES($1,$2,$3)",
       [b.trip_id, fleet.driver_id, job.id],
     );
+    const slot = new Date(job.arrival_at);
+    slot.setUTCSeconds(0, 0);
+    if (
+      await one(
+        c,
+        "SELECT job_id FROM local_arrival_slots WHERE driver_id=$1 AND arrival_at=$2",
+        [fleet.driver_id, slot],
+      )
+    )
+      fail(
+        "Ya aceptaste un traslado para esta misma hora de llegada. Elige otra hora.",
+        409,
+      );
+    await c.query(
+      "INSERT INTO local_arrival_slots(driver_id,arrival_at,job_id) VALUES($1,$2,$3)",
+      [fleet.driver_id, slot, job.id],
+    );
     await c.query(
       "UPDATE local_jobs SET fleet_id=$2,status='accepted',accepted_at=now(3) WHERE id=$1",
       [jobId, fleetId],
@@ -156,5 +175,73 @@ export async function acceptLocal(actor, jobId, fleetId, db = pool) {
       `local-driver:${job.id}`,
     );
     return updated;
+  }, db);
+}
+
+export async function advanceLocal(actor, jobId, action, db = pool) {
+  uuid.parse(jobId);
+  return transaction(async (c) => {
+    const lookup = await one(
+      c,
+      "SELECT f.driver_id,r.booking_id FROM local_jobs j JOIN local_fleet f ON f.id=j.fleet_id JOIN last_mile_requests r ON r.id=j.request_id WHERE j.id=$1",
+      [jobId],
+    );
+    if (!lookup) fail("Traslado inexistente.", 404);
+    const b = await one(
+      c,
+      "SELECT status FROM bookings WHERE id=$1 FOR UPDATE",
+      [lookup.booking_id],
+    );
+    if (b.status !== "confirmed") fail("El boleto ya no está confirmado.", 409);
+    const driver = await one(
+      c,
+      "SELECT * FROM drivers WHERE id=$1 FOR UPDATE",
+      [lookup.driver_id],
+    );
+    if (driver.user_id !== actor.id)
+      fail("Este traslado corresponde a otro conductor.", 403);
+    const j = await one(c, "SELECT * FROM local_jobs WHERE id=$1 FOR UPDATE", [
+      jobId,
+    ]);
+    if (j.status !== "accepted") fail("Traslado no disponible.", 409);
+    const running = await one(
+      c,
+      "SELECT job_id FROM local_driver_activity WHERE driver_id=$1",
+      [driver.id],
+    );
+    if (action === "start") {
+      if (!driver.active) fail("Conductor inactivo.", 409);
+      if (running)
+        fail("Finaliza el traslado en curso antes de iniciar otro.", 409);
+      await c.query(
+        "INSERT INTO local_driver_activity(driver_id,job_id) VALUES($1,$2)",
+        [driver.id, jobId],
+      );
+      await c.query("INSERT INTO local_job_progress(job_id) VALUES($1)", [
+        jobId,
+      ]);
+    } else if (action === "complete") {
+      if (running?.job_id !== jobId)
+        fail("Inicia este traslado antes de completarlo.", 409);
+      await c.query("UPDATE local_jobs SET status='completed' WHERE id=$1", [
+        jobId,
+      ]);
+      await c.query(
+        "UPDATE local_job_progress SET completed_at=now(3) WHERE job_id=$1",
+        [jobId],
+      );
+      await c.query("DELETE FROM local_driver_activity WHERE driver_id=$1", [
+        driver.id,
+      ]);
+    } else fail("Acción inválida.");
+    await c.query(
+      "INSERT INTO audit_log(actor_id,action,entity_id) VALUES($1,$2,$3)",
+      [actor.id, `local.${action}`, jobId],
+    );
+    return one(
+      c,
+      "SELECT j.*,p.started_at,p.completed_at FROM local_jobs j LEFT JOIN local_job_progress p ON p.job_id=j.id WHERE j.id=$1",
+      [jobId],
+    );
   }, db);
 }

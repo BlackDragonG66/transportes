@@ -110,6 +110,10 @@ test("Un chofer acepta una sola solicitud por llegada: carrera entre dos autos, 
   const f = await fixture(db, 6),
     next = await fixture(db, 6),
     driver = await fixture(db);
+  await db.query(
+    "UPDATE trips SET departure_at=DATE_ADD(departure_at,INTERVAL 1 HOUR),arrival_at=DATE_ADD(arrival_at,INTERVAL 1 HOUR) WHERE id=$1",
+    [next.trip.id],
+  );
   const cars = await Promise.all([
     localFleet(driver.driver, "Morelia"),
     localFleet(driver.driver, "Morelia"),
@@ -125,6 +129,12 @@ test("Un chofer acepta una sola solicitud por llegada: carrera entre dos autos, 
   );
   const accepted = race.find((r) => r.status === "fulfilled").value;
   const waiting = jobs.find((j) => j.id !== accepted.id);
+  await localCall(
+    driver.driverUser,
+    "post",
+    `/local/jobs/${accepted.id}/start`,
+    {},
+  ).expect(200);
   await localCall(
     driver.driverUser,
     "post",
@@ -434,6 +444,14 @@ test("Programación: horario de México, lote atómico ante conflictos y reinten
 });
 test("Paquetería: capacidad ACID, idempotencia, roles, recepción/corte, carga y entrega con código", async () => {
   const f = await fixture(db);
+  const operationsAdmin = await insert(db, "users", {
+    name: "Administrador de operaciones",
+    email: randomUUID() + "@example.com",
+    phone: "0000000000",
+    role: "admin",
+    password_hash: "test",
+  });
+
   await db.query("INSERT INTO trip_cargo VALUES($1,1,5000)", [f.trip.id]);
   const v = parcel(f.trip.id),
     key = randomUUID();
@@ -479,7 +497,7 @@ test("Paquetería: capacidad ACID, idempotencia, roles, recepción/corte, carga 
   assert.equal(report.difference_cents, 0);
   assert.equal(report.transactions, 1);
   await assert.rejects(
-    parcelAction(f.driverUser, p.id, { action: "load" }, db),
+    parcelAction(operationsAdmin, p.id, { action: "load" }, db),
     /abordaje/,
   );
   await db.query("UPDATE trips SET status='boarding' WHERE id=$1", [f.trip.id]);
@@ -490,11 +508,12 @@ test("Paquetería: capacidad ACID, idempotencia, roles, recepción/corte, carga 
   const other = await fixture(db);
   await assert.rejects(
     parcelAction(other.driverUser, p.id, { action: "load" }, db),
-    /No eres/,
+    /administración/,
   );
-  const loaded = await parcelAction(f.driverUser, p.id, { action: "load" }, db);
+  await assert.rejects(parcelAction(f.driverUser, p.id, { action: "load" }, db), /administración/);
+  const loaded = await parcelAction(operationsAdmin, p.id, { action: "load" }, db);
   assert.equal(loaded.status, "loaded");
-  assert.equal(loaded.pickup_code, undefined);
+  assert.equal(loaded.pickup_code, p.pickup_code);
   await transaction(
     (c) => advanceCargo(c, f.trip, "en_route", f.driverUser),
     db,
@@ -599,6 +618,13 @@ test("Recorrido HTTP completo: cliente, cajera, conductor, Uber y entrega; datos
     capacity: 4,
     luggage_capacity: 4,
   });
+  const operationsAdmin = await insert(db, "users", {
+    name: "Administrador de operaciones",
+    email: randomUUID() + "@example.com",
+    phone: "0000000000",
+    role: "admin",
+    password_hash: "test",
+  });
   const cookie = (user) =>
     `session=${jwt.sign({ sub: user.id }, config.secret, { issuer: "conexiones", audience: "conexiones-web", expiresIn: "1h" })}`;
   const call = (method, path, user, body) =>
@@ -680,13 +706,7 @@ test("Recorrido HTTP completo: cliente, cajera, conductor, Uber y entrega; datos
     ).pickup_code,
     undefined,
   );
-  await call(
-    "post",
-    `/operations/trips/${f.trip.id}/accept`,
-    f.driverUser,
-    {},
-  ).expect(200);
-  await call("patch", `/trips/${f.trip.id}/status`, f.driverUser, {
+  await call("patch", `/trips/${f.trip.id}/status`, operationsAdmin, {
     status: "boarding",
   }).expect(200);
   await call(
@@ -698,25 +718,25 @@ test("Recorrido HTTP completo: cliente, cajera, conductor, Uber y entrega; datos
   await call(
     "post",
     `/ticket/${b.ticket_token}/board`,
-    f.driverUser,
+    operationsAdmin,
     {},
   ).expect(200);
   await call(
     "post",
     `/ticket/${b.ticket_token}/board`,
-    f.driverUser,
+    operationsAdmin,
     {},
   ).expect(409);
-  await call("patch", `/trips/${f.trip.id}/status`, f.driverUser, {
+  await call("patch", `/trips/${f.trip.id}/status`, operationsAdmin, {
     status: "en_route",
   }).expect(409);
-  await call("post", `/parcels/${p.id}/action`, f.driverUser, {
+  await call("post", `/parcels/${p.id}/action`, operationsAdmin, {
     action: "load",
   }).expect(200);
-  await call("patch", `/trips/${f.trip.id}/status`, f.driverUser, {
+  await call("patch", `/trips/${f.trip.id}/status`, operationsAdmin, {
     status: "en_route",
   }).expect(200);
-  await call("patch", `/trips/${f.trip.id}/status`, f.driverUser, {
+  await call("patch", `/trips/${f.trip.id}/status`, operationsAdmin, {
     status: "arrived",
   }).expect(200);
   await call("post", `/parcels/${p.id}/action`, f.u, {
@@ -748,6 +768,12 @@ test("Recorrido HTTP completo: cliente, cajera, conductor, Uber y entrega; datos
     ),
   );
   await call("get", `/cash/${s.id}/report`, other.cashier).expect(200);
+  await call(
+    "post",
+    `/local/jobs/${jobs[0].id}/start`,
+    other.driverUser,
+    {},
+  ).expect(200);
   await call(
     "post",
     `/local/jobs/${jobs[0].id}/complete`,

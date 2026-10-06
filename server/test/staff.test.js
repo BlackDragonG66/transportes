@@ -6,7 +6,6 @@ import request from "supertest";
 import { app } from "../src/app.js";
 import { config } from "../src/config.js";
 import { pool, one, insert } from "../src/db.js";
-import { acceptDeparture } from "../src/staff.js";
 import { fixture, testDatabase } from "./helpers.js";
 import {
   staffArea,
@@ -48,11 +47,11 @@ test("Portales separados: rutas de equipo, perfil correcto y navegación de pasa
   assert.equal(allowedArea("admin", "cash"), true);
   assert.deepEqual(
     staffSections("drivers", { units: false, local: true }).map(([id]) => id),
-    ["taxi", "avisos", "cuenta"],
+    ["taxi", "unidad", "avisos", "cuenta"],
   );
   assert.deepEqual(
     staffSections("drivers", { units: true, local: false }).map(([id]) => id),
-    ["unidades", "avisos", "cuenta"],
+    ["unidades", "unidad", "avisos", "cuenta"],
   );
 });
 test("Perfiles de unidad, taxi y cajero: APIs y datos restringidos a sus permisos", async () => {
@@ -113,88 +112,51 @@ test("Perfiles de unidad, taxi y cajero: APIs y datos restringidos a sus permiso
     0,
   );
 });
-test("Aceptación de salida asignada, concurrencia, inicio obligatorio y secuencia de operación hasta historial", async () => {
+test("Conductor solo consulta; administración registra los estados sin aceptación", async () => {
   const f = await fixture(db),
     other = await fixture(db);
+  const admin = await insert(db, "users", {
+    name: "Admin operaciones",
+    email: `${randomUUID()}@example.com`,
+    phone: "0000000000",
+    role: "admin",
+    password_hash: "test",
+  });
   await call(
-    other.driverUser,
+    f.driverUser,
     "post",
     `/operations/trips/${f.trip.id}/accept`,
     {},
-  ).expect(403);
-  await call(
-    f.cashier,
-    "post",
-    `/operations/trips/${f.trip.id}/accept`,
-    {},
-  ).expect(403);
-  await call(f.u, "post", `/operations/trips/${f.trip.id}/accept`, {}).expect(
-    403,
-  );
-  await call(f.driverUser, "patch", `/trips/${f.trip.id}/status`, {
-    status: "boarding",
-  }).expect(409);
-  const race = await Promise.all([
-    acceptDeparture(f.driverUser, f.trip.id, db),
-    acceptDeparture(f.driverUser, f.trip.id, db),
-  ]);
-  assert.equal(race[0].trip_id, race[1].trip_id);
-  assert.equal(
-    (
-      await one(
-        db,
-        "SELECT count(*) AS n FROM audit_log WHERE action='trip.accepted' AND entity_id=$1",
-        [f.trip.id],
-      )
-    ).n,
-    1,
-  );
-  assert.ok(
-    (
-      await call(f.driverUser, "get", "/operations/trips").expect(200)
-    ).body.find((t) => t.id === f.trip.id).accepted_at,
-  );
-  await call(other.driverUser, "patch", `/trips/${f.trip.id}/status`, {
-    status: "boarding",
-  }).expect(403);
-  await call(f.driverUser, "patch", `/trips/${f.trip.id}/status`, {
+  ).expect(404);
+  for (const actor of [f.driverUser, other.driverUser, f.cashier, f.u])
+    await call(actor, "patch", `/trips/${f.trip.id}/status`, {
+      status: "boarding",
+    }).expect(403);
+  await call(admin, "patch", `/trips/${f.trip.id}/status`, {
     status: "en_route",
   }).expect(409);
-  await call(f.driverUser, "patch", `/trips/${f.trip.id}/status`, {
+  await call(admin, "patch", `/trips/${f.trip.id}/status`, {
     status: "boarding",
   }).expect(200);
   await db.query(
     "UPDATE trips SET driver_id=$1,departure_at=DATE_ADD(departure_at,INTERVAL 2 DAY),arrival_at=DATE_ADD(arrival_at,INTERVAL 2 DAY) WHERE id=$2",
     [f.driver.id, other.trip.id],
   );
-  await call(
-    f.driverUser,
-    "post",
-    `/operations/trips/${other.trip.id}/accept`,
-    {},
-  ).expect(200);
-  const busyDriver = await call(
-    f.driverUser,
-    "patch",
-    `/trips/${other.trip.id}/status`,
-    { status: "boarding" },
-  ).expect(409);
-  assert.match(busyDriver.body.error, /conductor tiene otro viaje activo/);
-  await call(f.driverUser, "patch", `/trips/${f.trip.id}/status`, {
-    status: "en_route",
-  }).expect(200);
-  await call(f.driverUser, "patch", `/trips/${f.trip.id}/status`, {
-    status: "arrived",
-  }).expect(200);
-  const done = (
-    await call(f.driverUser, "get", "/operations/trips").expect(200)
-  ).body.find((t) => t.id === f.trip.id);
-  assert.equal(done.status, "arrived");
-  assert.ok(done.accepted_at);
-  await call(f.driverUser, "patch", `/trips/${other.trip.id}/status`, {
-    status: "boarding",
-  }).expect(200);
-  await call(f.driverUser, "patch", `/trips/${f.trip.id}/status`, {
+  const blocked = await call(admin, "patch", `/trips/${other.trip.id}/status`, {
     status: "boarding",
   }).expect(409);
+  assert.match(blocked.body.error, /conductor tiene otro viaje activo/);
+  await call(admin, "patch", `/trips/${f.trip.id}/status`, {
+    status: "en_route",
+  }).expect(200);
+  await call(admin, "patch", `/trips/${f.trip.id}/status`, {
+    status: "arrived",
+  }).expect(200);
+  const history = (
+    await call(f.driverUser, "get", "/operations/trips").expect(200)
+  ).body;
+  assert.equal(history.find((t) => t.id === f.trip.id).status, "arrived");
+  await call(admin, "patch", `/trips/${other.trip.id}/status`, {
+    status: "boarding",
+  }).expect(200);
 });

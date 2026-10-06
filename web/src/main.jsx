@@ -6,6 +6,7 @@ import "./demo.css";
 import { api, date, money, enablePush, disablePush } from "./api.js";
 import ReservationForm from "./ReservationForm.jsx";
 import BoardingView from "./BoardingView.jsx";
+import { TaxiVerification } from "./StaffVehicles.jsx";
 import StaffPortal from "./StaffPortal.jsx";
 import { staffArea, staffPaths } from "./staff-routing.js";
 import Account from "./Account.jsx";
@@ -141,7 +142,7 @@ function App() {
     return () => document.removeEventListener("keydown", close);
   }, [login]);
   const match = location.pathname.match(
-      /^\/(ticket|vehicle|tracking|parcel-tracking)\/([a-f0-9-]+)$/i,
+      /^\/(ticket|vehicle|tracking|parcel-tracking|taxi)\/([a-f0-9-]+)$/i,
     ),
     activation = location.pathname.match(/^\/activate\/([a-f0-9]{64})$/),
     requiresAuth = match?.[1] === "ticket";
@@ -336,6 +337,8 @@ function App() {
           />
         ) : match?.[1] === "parcel-tracking" ? (
           <ParcelTracking token={match[2]} />
+        ) : match?.[1] === "taxi" ? (
+          <TaxiVerification token={match[2]} />
         ) : match ? (
           requiresAuth && !user ? (
             <Auth onUser={setUser} />

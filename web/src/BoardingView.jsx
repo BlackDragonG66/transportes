@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
 import { api, date, money } from "./api.js";
 import TaxiForm from "./TaxiForm.jsx";
+import TripProgress from "./TripProgress.jsx";
+import TripRating from "./TripRating.jsx";
 const labels = {
   pending: "Pendiente de pago",
   confirmed: "Confirmada",
@@ -79,6 +81,7 @@ export default function BoardingView({ mode, token, user }) {
         <span className="tag is-primary is-light is-medium">
           {labels[t.status] || t.status}
         </span>
+        <TripProgress status={t.status} />
         <p className="mt-4">
           Salida: {date(t.departure_at)}
           <br />
@@ -149,7 +152,7 @@ export default function BoardingView({ mode, token, user }) {
                   <button className="button is-primary" onClick={share}>
                     Compartir mi viaje
                   </button>
-                  {["driver", "admin"].includes(user?.role) && (
+                  {user?.role === "admin" && (
                     <button
                       disabled={Boolean(b.boarded_at)}
                       className="button is-link"
@@ -171,6 +174,11 @@ export default function BoardingView({ mode, token, user }) {
                     <strong>
                       Auto {i + 1}: {labels[j.status]}
                     </strong>
+                    <TripProgress
+                      title={`Traslado local · Auto ${i + 1}`}
+                      status={j.status}
+                      started={j.started_at}
+                    />
                     <p>
                       {j.zone} · {j.passengers} pasajeros · {j.luggage} maletas
                     </p>
@@ -181,9 +189,26 @@ export default function BoardingView({ mode, token, user }) {
                         {j.model} · {j.plate}
                       </p>
                     )}
+                    {data.canReview && j.status === "completed" && (
+                      <TripRating
+                        bookingId={b.id}
+                        jobId={j.id}
+                        title={`Califica tu traslado · ${j.driver_name}`}
+                        review={data.reviews?.find((r) => r.job_id === j.id)}
+                        onSaved={load}
+                      />
+                    )}
                   </div>
                 ))}
               </>
+            )}
+            {data.canReview && t.status === "arrived" && (
+              <TripRating
+                bookingId={b.id}
+                title={`Califica tu viaje · ${t.driver_name}`}
+                review={data.reviews?.find((r) => r.segment === "interurban")}
+                onSaved={load}
+              />
             )}
           </>
         )}
@@ -194,6 +219,33 @@ export default function BoardingView({ mode, token, user }) {
         )}
         {error && <p className="help is-danger">{error}</p>}
       </div>
+      {mode === "tracking" && data.local?.length > 0 && (
+        <div className="box">
+          <h2 className="title is-5">Conexión en Taxi / Uber</h2>
+          {data.local.map((j, i) => (
+            <div key={i} className="mb-5">
+              <TripProgress
+                title={`Auto ${i + 1}`}
+                status={j.status}
+                started={j.started_at}
+              />
+              {j.driver_name && (
+                <p>
+                  {j.driver_name} · {j.model} · {j.plate}
+                </p>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+      {mode === "tracking" && t.status === "arrived" && (
+        <p className="notification is-light">
+          ¿Viajaste con nosotros?{" "}
+          <a href="/#bookings">
+            Abre tu boleto en Mis reservas para calificar tu experiencia.
+          </a>
+        </p>
+      )}
       {data.canRequestLocal && !data.lastMile && (
         <TaxiForm booking={b} trip={t} onSaved={load} />
       )}

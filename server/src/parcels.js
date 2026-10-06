@@ -223,11 +223,8 @@ export async function parcelAction(actor, id, raw, db = pool) {
         [id, cash?.id || null],
       );
     } else if (v.action === "load") {
-      if (
-        actor.role !== "admin" &&
-        (actor.role !== "driver" || t.driver_user !== actor.id)
-      )
-        fail("No eres el conductor de la unidad.", 403);
+      if (actor.role !== "admin")
+        fail("La administración registra la carga de la unidad.", 403);
       if (p.status !== "received" || t.status !== "boarding")
         fail("Inicia el abordaje para cargar este paquete.", 409);
       status = "loaded";

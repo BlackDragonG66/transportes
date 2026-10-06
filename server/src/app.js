@@ -37,9 +37,21 @@ import {
   mpRequest,
   reconcilePayment,
 } from "./mercadopago.js";
-import { acceptLocal, requestLastMile } from "./local.js";
+import {
+  acceptLocal,
+  requestLastMile,
+  advanceLocal,
+  arrivalSlot,
+} from "./local.js";
+import { saveReview } from "./reviews.js";
 import { coversArrival, localCities, arrivalCity } from "./local-cities.js";
-import { staffProfile, acceptDeparture } from "./staff.js";
+import { staffProfile } from "./staff.js";
+import {
+  staffVehicles,
+  updateLocalVehicle,
+  publicLocalVehicle,
+  ensureLocalProfiles,
+} from "./staff-vehicles.js";
 import { pushSchema } from "./notifications.js";
 import {
   getSite,
@@ -377,15 +389,28 @@ app.get(
   role("driver", "cashier", "admin"),
   async (req, res) => res.json(await staffProfile(req.user)),
 );
-app.post(
-  "/api/operations/trips/:id/accept",
+app.get(
+  "/api/staff/vehicles",
   auth,
   role("driver", "admin"),
   async (req, res) => {
-    z.object({}).strict().parse(req.body);
-    res.json(await acceptDeparture(req.user, req.params.id));
+    res.json(await staffVehicles(req.user));
   },
 );
+app.patch(
+  "/api/staff/local-vehicles/:id",
+  auth,
+  role("driver", "admin"),
+  async (req, res) => {
+    res.json(await updateLocalVehicle(req.user, req.params.id, req.body));
+  },
+);
+app.get("/api/taxi/:token", async (req, res) => {
+  res.json(await publicLocalVehicle(req.params.token));
+});
+app.post("/api/bookings/:id/reviews", auth, async (req, res) => {
+  res.json(await saveReview(req.user, req.params.id, req.body));
+});
 app.post("/api/auth/password", auth, loginLimit, async (req, res) => {
   const v = z
     .object({
@@ -579,7 +604,7 @@ app.get("/api/local/jobs", auth, role("driver", "admin"), async (req, res) => {
   ).rows;
   const jobs = (
     await pool.query(
-      `SELECT j.*,b.trip_id,r.zone,t.arrival_at,rt.destination,f.model,f.city,du.name AS driver_name,d.user_id AS owner_id,CASE WHEN d.user_id=$1 OR $2=1 THEN u.name END AS customer_name,CASE WHEN d.user_id=$1 OR $2=1 THEN u.phone END AS customer_phone FROM local_jobs j JOIN last_mile_requests r ON r.id=j.request_id JOIN bookings b ON b.id=r.booking_id JOIN users u ON u.id=b.user_id JOIN trips t ON t.id=b.trip_id JOIN routes rt ON rt.id=t.route_id LEFT JOIN local_fleet f ON f.id=j.fleet_id LEFT JOIN drivers d ON d.id=f.driver_id LEFT JOIN users du ON du.id=d.user_id WHERE b.status='confirmed' AND (j.status='waiting' OR d.user_id=$1 OR $2=1) ORDER BY t.arrival_at`,
+      `SELECT j.*,p.started_at,p.completed_at,b.trip_id,r.zone,t.arrival_at,rt.destination,f.model,f.plate,f.city,du.name AS driver_name,d.user_id AS owner_id,CASE WHEN d.user_id=$1 OR $2=1 THEN u.name END AS customer_name,CASE WHEN d.user_id=$1 OR $2=1 THEN u.phone END AS customer_phone FROM local_jobs j JOIN last_mile_requests r ON r.id=j.request_id JOIN bookings b ON b.id=r.booking_id JOIN users u ON u.id=b.user_id JOIN trips t ON t.id=b.trip_id JOIN routes rt ON rt.id=t.route_id LEFT JOIN local_job_progress p ON p.job_id=j.id LEFT JOIN local_fleet f ON f.id=j.fleet_id LEFT JOIN drivers d ON d.id=f.driver_id LEFT JOIN users du ON du.id=d.user_id WHERE b.status='confirmed' AND (j.status='waiting' OR d.user_id=$1 OR $2=1) ORDER BY t.arrival_at`,
       [req.user.id, req.user.role === "admin" ? 1 : 0],
     )
   ).rows;
@@ -591,12 +616,21 @@ app.get("/api/local/jobs", auth, role("driver", "admin"), async (req, res) => {
       )
     ).rows.map((a) => a.trip_id),
   );
+  const usedHours = new Set(
+    (
+      await pool.query(
+        "SELECT a.arrival_at FROM local_arrival_slots a JOIN drivers d ON d.id=a.driver_id WHERE d.user_id=$1",
+        [req.user.id],
+      )
+    ).rows.map((a) => arrivalSlot(a.arrival_at)),
+  );
   const eligible = jobs.filter(
     (j) =>
       req.user.role === "admin" ||
       j.owner_id === req.user.id ||
       (j.status === "waiting" &&
         !used.has(j.trip_id) &&
+        !usedHours.has(arrivalSlot(j.arrival_at)) &&
         fleet.some(
           (f) =>
             coversArrival(f.city, j.destination) &&
@@ -622,22 +656,16 @@ app.post(
     res.json(await acceptLocal(req.user, req.params.id, v.fleetId));
   },
 );
-app.post(
-  "/api/local/jobs/:id/complete",
-  auth,
-  role("driver", "admin"),
-  async (req, res) => {
-    uuid.parse(req.params.id);
-    const result = await pool.query(
-      `UPDATE local_jobs j JOIN local_fleet f ON j.fleet_id=f.id JOIN drivers d ON f.driver_id=d.id SET j.status='completed' WHERE j.id=$1 AND d.user_id=$2 AND j.status='accepted'`,
-      [req.params.id, req.user.id],
-    );
-    if (!result.affectedRows) fail("Viaje no disponible.", 409);
-    res.json(
-      await one(pool, "SELECT * FROM local_jobs WHERE id=$1", [req.params.id]),
-    );
-  },
-);
+for (const action of ["start", "complete"])
+  app.post(
+    `/api/local/jobs/:id/${action}`,
+    auth,
+    role("driver", "admin"),
+    async (req, res) => {
+      z.object({}).strict().parse(req.body);
+      res.json(await advanceLocal(req.user, req.params.id, action));
+    },
+  );
 app.get("/api/push/key", auth, (req, res) =>
   res.json({ key: process.env.VAPID_PUBLIC_KEY || null }),
 );
@@ -685,7 +713,13 @@ app.get("/api/tracking/:token", async (req, res) => {
     req.params.token,
   );
   if (!t) fail("Enlace inexistente.", 404);
-  res.json(t);
+  const local = (
+    await pool.query(
+      `SELECT j.status,p.started_at,p.completed_at,f.model,f.plate,u.name AS driver_name FROM bookings b JOIN last_mile_requests r ON r.booking_id=b.id JOIN local_jobs j ON j.request_id=r.id LEFT JOIN local_job_progress p ON p.job_id=j.id LEFT JOIN local_fleet f ON f.id=j.fleet_id LEFT JOIN drivers d ON d.id=f.driver_id LEFT JOIN users u ON u.id=d.user_id WHERE b.share_token=$1 ORDER BY j.id`,
+      [req.params.token],
+    )
+  ).rows;
+  res.json({ ...t, local });
 });
 app.get("/api/ticket/:token", auth, async (req, res) => {
   uuid.parse(req.params.token);
@@ -698,7 +732,7 @@ app.get("/api/ticket/:token", auth, async (req, res) => {
   const trip = await publicTrip("t.id=$1", b.trip_id);
   const local = (
     await pool.query(
-      `SELECT j.status,j.passengers,j.luggage,r.zone,f.model,f.plate,u.name AS driver_name,u.phone,d.photo_url FROM last_mile_requests r JOIN local_jobs j ON j.request_id=r.id LEFT JOIN local_fleet f ON f.id=j.fleet_id LEFT JOIN drivers d ON d.id=f.driver_id LEFT JOIN users u ON u.id=d.user_id WHERE r.booking_id=$1`,
+      `SELECT j.id,j.status,p.started_at,p.completed_at,j.passengers,j.luggage,r.zone,f.model,f.plate,u.name AS driver_name,u.phone,d.photo_url FROM last_mile_requests r JOIN local_jobs j ON j.request_id=r.id LEFT JOIN local_job_progress p ON p.job_id=j.id LEFT JOIN local_fleet f ON f.id=j.fleet_id LEFT JOIN drivers d ON d.id=f.driver_id LEFT JOIN users u ON u.id=d.user_id WHERE r.booking_id=$1`,
       [b.id],
     )
   ).rows;
@@ -715,6 +749,16 @@ app.get("/api/ticket/:token", auth, async (req, res) => {
   );
   res.json({
     booking: b,
+    canReview: b.user_id === req.user.id && b.status === "confirmed",
+    reviews:
+      b.user_id === req.user.id
+        ? (
+            await pool.query(
+              "SELECT segment,job_id,rating,comment FROM trip_reviews WHERE booking_id=$1",
+              [b.id],
+            )
+          ).rows
+        : [],
     isDemo: await isDemo(pool, "trip", b.trip_id),
     trip,
     local,
@@ -729,46 +773,38 @@ app.get("/api/ticket/:token", auth, async (req, res) => {
     qr: await QRCode.toDataURL(`${config.appUrl}/ticket/${b.ticket_token}`),
   });
 });
-app.post(
-  "/api/ticket/:token/board",
-  auth,
-  role("driver", "admin"),
-  async (req, res) => {
-    uuid.parse(req.params.token);
-    const b = await transaction(async (c) => {
-      const lookup = await one(
-        c,
-        "SELECT trip_id FROM bookings WHERE ticket_token=$1",
-        [req.params.token],
-      );
-      if (!lookup) fail("Boleto no válido.", 409);
-      await c.query("SELECT id FROM trips WHERE id=$1 FOR UPDATE", [
-        lookup.trip_id,
-      ]);
-      const b = await one(
-        c,
-        "SELECT * FROM bookings WHERE ticket_token=$1 FOR UPDATE",
-        [req.params.token],
-      );
-      if (!b || b.status !== "confirmed") fail("Boleto no válido.", 409);
-      const trip = await one(
-        c,
-        "SELECT t.*,d.user_id FROM trips t JOIN drivers d ON d.id=t.driver_id WHERE t.id=$1",
-        [b.trip_id],
-      );
-      if (req.user.role !== "admin" && trip.user_id !== req.user.id)
-        fail("No eres el conductor de este viaje.", 403);
-      if (trip.status !== "boarding")
-        fail("El viaje no está en abordaje.", 409);
-      if (b.boarded_at) fail("Boleto ya utilizado.", 409);
-      await c.query("UPDATE bookings SET boarded_at=now(3) WHERE id=$1", [
-        b.id,
-      ]);
-      return one(c, "SELECT * FROM bookings WHERE id=$1", [b.id]);
-    });
-    res.json(b);
-  },
-);
+app.post("/api/ticket/:token/board", auth, role("admin"), async (req, res) => {
+  uuid.parse(req.params.token);
+  const b = await transaction(async (c) => {
+    const lookup = await one(
+      c,
+      "SELECT trip_id FROM bookings WHERE ticket_token=$1",
+      [req.params.token],
+    );
+    if (!lookup) fail("Boleto no válido.", 409);
+    await c.query("SELECT id FROM trips WHERE id=$1 FOR UPDATE", [
+      lookup.trip_id,
+    ]);
+    const b = await one(
+      c,
+      "SELECT * FROM bookings WHERE ticket_token=$1 FOR UPDATE",
+      [req.params.token],
+    );
+    if (!b || b.status !== "confirmed") fail("Boleto no válido.", 409);
+    const trip = await one(
+      c,
+      "SELECT t.*,d.user_id FROM trips t JOIN drivers d ON d.id=t.driver_id WHERE t.id=$1",
+      [b.trip_id],
+    );
+    if (req.user.role !== "admin" && trip.user_id !== req.user.id)
+      fail("No eres el conductor de este viaje.", 403);
+    if (trip.status !== "boarding") fail("El viaje no está en abordaje.", 409);
+    if (b.boarded_at) fail("Boleto ya utilizado.", 409);
+    await c.query("UPDATE bookings SET boarded_at=now(3) WHERE id=$1", [b.id]);
+    return one(c, "SELECT * FROM bookings WHERE id=$1", [b.id]);
+  });
+  res.json(b);
+});
 app.get("/api/admin/site", auth, role("admin"), async (req, res) =>
   res.json(await getSite(true)),
 );
@@ -949,6 +985,7 @@ app.post("/api/admin/:table", auth, role("admin"), async (req, res) => {
       v.arrival_at = new Date(v.arrival_at);
     }
     const row = await insert(c, table, v);
+    if (table === "local_fleet") await ensureLocalProfiles(c);
     if (table === "trips") {
       await c.query("INSERT INTO trip_cargo VALUES($1,20,100000)", [row.id]);
       if (
@@ -977,81 +1014,67 @@ app.patch("/api/admin/addons/:id", auth, role("admin"), async (req, res) => {
   if (!addon) fail("Complemento inexistente.", 404);
   res.json(addon);
 });
-app.patch(
-  "/api/trips/:id/status",
-  auth,
-  role("admin", "driver"),
-  async (req, res) => {
-    uuid.parse(req.params.id);
-    const { status } = z
-      .object({ status: z.enum(["boarding", "en_route", "arrived"]) })
-      .strict()
-      .parse(req.body);
-    res.json(
-      await transaction(async (c) => {
-        const lookup = await one(
+app.patch("/api/trips/:id/status", auth, role("admin"), async (req, res) => {
+  uuid.parse(req.params.id);
+  const { status } = z
+    .object({ status: z.enum(["boarding", "en_route", "arrived"]) })
+    .strict()
+    .parse(req.body);
+  res.json(
+    await transaction(async (c) => {
+      const lookup = await one(
+        c,
+        "SELECT vehicle_id,driver_id FROM trips WHERE id=$1",
+        [req.params.id],
+      );
+      if (!lookup) fail("Viaje inexistente.", 404);
+      await c.query("SELECT id FROM vehicles WHERE id=$1 FOR UPDATE", [
+        lookup.vehicle_id,
+      ]);
+      await c.query("SELECT id FROM drivers WHERE id=$1 FOR UPDATE", [
+        lookup.driver_id,
+      ]);
+      await c.query("SELECT id FROM trips WHERE id=$1 FOR UPDATE", [
+        req.params.id,
+      ]);
+      const t = await one(
+        c,
+        "SELECT t.*,d.user_id FROM trips t JOIN drivers d ON d.id=t.driver_id WHERE t.id=$1",
+        [req.params.id],
+      );
+      if (req.user.role !== "admin" && t.user_id !== req.user.id)
+        fail("No eres el conductor.", 403);
+      if (
+        { scheduled: "boarding", boarding: "en_route", en_route: "arrived" }[
+          t.status
+        ] !== status
+      )
+        fail("Transición inválida.", 409);
+      // A physical unit can expose only one active trip through its QR.
+      if (
+        status === "boarding" &&
+        (await one(
           c,
-          "SELECT vehicle_id,driver_id FROM trips WHERE id=$1",
-          [req.params.id],
-        );
-        if (!lookup) fail("Viaje inexistente.", 404);
-        await c.query("SELECT id FROM vehicles WHERE id=$1 FOR UPDATE", [
-          lookup.vehicle_id,
-        ]);
-        await c.query("SELECT id FROM drivers WHERE id=$1 FOR UPDATE", [
-          lookup.driver_id,
-        ]);
-        await c.query("SELECT id FROM trips WHERE id=$1 FOR UPDATE", [
-          req.params.id,
-        ]);
-        const t = await one(
+          "SELECT id FROM trips WHERE driver_id=$1 AND id<>$2 AND status IN ('boarding','en_route')",
+          [t.driver_id, t.id],
+        ))
+      )
+        fail("El conductor tiene otro viaje activo.", 409);
+      if (
+        status === "boarding" &&
+        (await one(
           c,
-          "SELECT t.*,d.user_id FROM trips t JOIN drivers d ON d.id=t.driver_id WHERE t.id=$1",
-          [req.params.id],
-        );
-        if (req.user.role !== "admin" && t.user_id !== req.user.id)
-          fail("No eres el conductor.", 403);
-        if (
-          { scheduled: "boarding", boarding: "en_route", en_route: "arrived" }[
-            t.status
-          ] !== status
-        )
-          fail("Transición inválida.", 409);
-        // A physical unit can expose only one active trip through its QR.
-        if (
-          status === "boarding" &&
-          (await one(
-            c,
-            "SELECT id FROM trips WHERE driver_id=$1 AND id<>$2 AND status IN ('boarding','en_route')",
-            [t.driver_id, t.id],
-          ))
-        )
-          fail("El conductor tiene otro viaje activo.", 409);
-        if (
-          status === "boarding" &&
-          !(await one(
-            c,
-            "SELECT trip_id FROM trip_driver_acceptances WHERE trip_id=$1 AND driver_id=$2",
-            [t.id, t.driver_id],
-          ))
-        )
-          fail("Acepta la salida asignada antes de iniciar el abordaje.", 409);
-        if (
-          status === "boarding" &&
-          (await one(
-            c,
-            "SELECT id FROM trips WHERE vehicle_id=$1 AND id<>$2 AND status IN ('boarding','en_route')",
-            [t.vehicle_id, t.id],
-          ))
-        )
-          fail("La unidad tiene otro viaje activo.", 409);
-        await c.query("UPDATE trips SET status=$2 WHERE id=$1", [t.id, status]);
-        await advanceCargo(c, t, status, req.user);
-        return one(c, "SELECT * FROM trips WHERE id=$1", [t.id]);
-      }),
-    );
-  },
-);
+          "SELECT id FROM trips WHERE vehicle_id=$1 AND id<>$2 AND status IN ('boarding','en_route')",
+          [t.vehicle_id, t.id],
+        ))
+      )
+        fail("La unidad tiene otro viaje activo.", 409);
+      await c.query("UPDATE trips SET status=$2 WHERE id=$1", [t.id, status]);
+      await advanceCargo(c, t, status, req.user);
+      return one(c, "SELECT * FROM trips WHERE id=$1", [t.id]);
+    }),
+  );
+});
 app.get(
   "/api/operations/trips",
   auth,
@@ -1060,7 +1083,7 @@ app.get(
     res.json(
       (
         await pool.query(
-          `SELECT t.*,r.origin,r.destination,v.brand,v.model,v.plate,u.name AS driver_name,a.accepted_at FROM trips t JOIN routes r ON r.id=t.route_id JOIN vehicles v ON v.id=t.vehicle_id JOIN drivers d ON d.id=t.driver_id JOIN users u ON u.id=d.user_id LEFT JOIN trip_driver_acceptances a ON a.trip_id=t.id AND a.driver_id=t.driver_id WHERE ($2 OR d.user_id=$1) AND t.status<>'cancelled' AND (t.departure_at>=DATE_SUB(now(),INTERVAL 30 DAY) OR t.status IN ('boarding','en_route')) ORDER BY departure_at LIMIT 600`,
+          `SELECT t.*,r.origin,r.destination,v.brand,v.model,v.plate,u.name AS driver_name FROM trips t JOIN routes r ON r.id=t.route_id JOIN vehicles v ON v.id=t.vehicle_id JOIN drivers d ON d.id=t.driver_id JOIN users u ON u.id=d.user_id WHERE ($2 OR d.user_id=$1) AND t.status<>'cancelled' AND (t.departure_at>=DATE_SUB(now(),INTERVAL 30 DAY) OR t.status IN ('boarding','en_route')) ORDER BY departure_at LIMIT 600`,
           [req.user.id, req.user.role === "admin"],
         )
       ).rows,
